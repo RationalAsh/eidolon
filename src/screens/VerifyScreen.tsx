@@ -115,6 +115,16 @@ const toAssetSummary = (
   };
 };
 
+type PermissionDetails = MediaLibrary.PermissionResponse & {
+  accessPrivileges?: "all" | "limited" | "none";
+};
+
+const hasLibraryAccess = (perm: PermissionDetails) =>
+  perm.granted || perm.accessPrivileges === "limited";
+
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 const VerifyScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const [assetSummaries, setAssetSummaries] = useState<AssetSummary[]>([]);
@@ -124,28 +134,23 @@ const VerifyScreen: React.FC = () => {
   const [libraryError, setLibraryError] = useState<string | null>(null);
 
   const ensureMediaPermissions = useCallback(async () => {
-    const existing = await MediaLibrary.getPermissionsAsync();
-    if (existing.granted) {
+    const existing = (await MediaLibrary.getPermissionsAsync()) as PermissionDetails;
+    if (hasLibraryAccess(existing)) {
       return true;
     }
     if (!existing.canAskAgain) {
       setLibraryError("Media library access was denied. Enable it in system settings to verify captures.");
       return false;
     }
-    const request = await MediaLibrary.requestPermissionsAsync();
-    if (!request.granted) {
+    const request = (await MediaLibrary.requestPermissionsAsync()) as PermissionDetails;
+    if (!hasLibraryAccess(request)) {
       setLibraryError("Media library access is required to pick a file.");
       return false;
     }
     return true;
   }, []);
 
-  const loadLatestAssets = useCallback(async () => {
-    const permitted = await ensureMediaPermissions();
-    if (!permitted) {
-      return;
-    }
-
+  const fetchAssetSummaries = useCallback(async () => {
     setAssetsLoading(true);
     setLibraryError(null);
     try {
@@ -172,6 +177,9 @@ const VerifyScreen: React.FC = () => {
         })
       );
       setAssetSummaries(summaries);
+      if (summaries.length === 0) {
+        setLibraryError("No media found in the device library yet.");
+      }
     } catch (error) {
       const message =
         error instanceof Error
@@ -181,7 +189,16 @@ const VerifyScreen: React.FC = () => {
     } finally {
       setAssetsLoading(false);
     }
-  }, [ensureMediaPermissions]);
+  }, []);
+
+  const loadLatestAssets = useCallback(async () => {
+    const permitted = await ensureMediaPermissions();
+    if (!permitted) {
+      return;
+    }
+
+    await fetchAssetSummaries();
+  }, [ensureMediaPermissions, fetchAssetSummaries]);
 
   const resolveAssetUri = useCallback(async (summary: AssetSummary): Promise<SelectedAssetDetails> => {
     const info = await MediaLibrary.getAssetInfoAsync(summary.id, {
@@ -202,8 +219,9 @@ const VerifyScreen: React.FC = () => {
   }, []);
 
   const handleManageLibrary = useCallback(async () => {
+    setLibraryError(null);
+
     try {
-      setLibraryError(null);
       if (
         typeof (MediaLibrary as {
           presentPermissionsPickerAsync?: () => Promise<void>;
@@ -215,15 +233,29 @@ const VerifyScreen: React.FC = () => {
       } else {
         await MediaLibrary.requestPermissionsAsync();
       }
-      await loadLatestAssets();
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : "Unable to update media library permissions.";
       setLibraryError(message);
+      return;
     }
-  }, [loadLatestAssets]);
+
+    try {
+      await delay(200);
+      const updatedPermissions = (await MediaLibrary.getPermissionsAsync()) as PermissionDetails;
+      if (!hasLibraryAccess(updatedPermissions)) {
+        setLibraryError(
+          "Media library access remains limited. You can grant more items from Settings."
+        );
+        return;
+      }
+      await fetchAssetSummaries();
+    } catch (error) {
+      console.warn("Manage access refresh failed", error);
+    }
+  }, [fetchAssetSummaries]);
 
   useEffect(() => {
     loadLatestAssets().catch((error) => {
