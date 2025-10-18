@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import nacl from "tweetnacl";
 import { ensureIdentity } from "../services/deviceIdentity";
 import { writeReceiptToFile } from "../services/captureStorage";
+import { syncReceiptsToSupabase } from "../services/receiptSync";
 import type { CaptureMode, CaptureReceipt } from "../types/capture";
 const DEFAULT_MODE: CaptureMode = "photo";
 const DEFAULT_CAMERA: CameraType = "back";
@@ -61,6 +62,13 @@ const CaptureScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [lastReceipt, setLastReceipt] = useState<CaptureReceipt | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const loadMediaPermission = useCallback(async () => {
     const response = await MediaLibrary.getPermissionsAsync();
@@ -186,9 +194,33 @@ const CaptureScreen: React.FC = () => {
 
         const stored = await writeReceiptToFile(receipt);
         setLastReceipt(stored);
-        setStatusMessage(
-          mode === "photo" ? "Photo saved with signature." : "Video saved with signature."
-        );
+
+        const baseMessage =
+          mode === "photo" ? "Photo saved with signature." : "Video saved with signature.";
+        setStatusMessage(baseMessage);
+
+        syncReceiptsToSupabase()
+          .then((report) => {
+            if (!isMountedRef.current) {
+              return;
+            }
+
+            if (report.uploaded > 0) {
+              const suffix = report.uploaded === 1 ? "receipt" : "receipts";
+              setStatusMessage(`${baseMessage} Synced ${report.uploaded} ${suffix} to Supabase.`);
+            } else if (report.errors > 0) {
+              setStatusMessage(`${baseMessage} Sync issue – open Settings to retry.`);
+            } else {
+              setStatusMessage(`${baseMessage} Supabase already up to date.`);
+            }
+          })
+          .catch((error) => {
+            console.warn("Automatic receipt sync failed", error);
+            if (!isMountedRef.current) {
+              return;
+            }
+            setStatusMessage(`${baseMessage} Supabase sync unavailable.`);
+          });
       } catch (error) {
         console.error("Failed to process capture:", error);
         Alert.alert(
