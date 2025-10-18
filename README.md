@@ -1,4 +1,4 @@
-# EntropyCam Expo App
+# Eidolon Demo App
 
 Hackathon-oriented Expo app that anchors captured media to device-specific entropy and publishes verifiable receipts. This skeleton mirrors the flow described in `docs/AGENTS.md` and wires up navigation scaffolding for the core demo screens.
 

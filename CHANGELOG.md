@@ -6,3 +6,4 @@
 - Added placeholder screens for onboarding, calibration, capture, verification, and settings aligned with the hackathon spec.
 - Added `README.md` outlining run steps and roadmap.
 - Installed `react-native-gesture-handler` and updated bootstrap sequence (`index.ts`, `App.tsx`) along with Expo-aligned `react-native-screens` / `react-native-safe-area-context` versions to stabilize navigation runtime.
+- Renamed the project to **Eidolon** across Expo config, package metadata, and docs.

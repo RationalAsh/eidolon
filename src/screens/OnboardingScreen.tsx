@@ -12,7 +12,7 @@ const OnboardingScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Welcome to EntropyCam</Text>
+      <Text style={styles.title}>Welcome to Eidolon</Text>
       <Text style={styles.subtitle}>
         Capture sensor-rooted media, sign receipts, and verify authenticity.
       </Text>
@@ -85,4 +85,3 @@ const styles = StyleSheet.create({
 });
 
 export default OnboardingScreen;
-

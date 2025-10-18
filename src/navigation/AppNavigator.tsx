@@ -90,7 +90,7 @@ const AppNavigator: React.FC = () => {
         <Stack.Screen
           name="Onboarding"
           component={OnboardingScreen}
-          options={{ title: "EntropyCam Onboarding" }}
+          options={{ title: "Eidolon Onboarding" }}
         />
         <Stack.Screen
           name="Calibration"
