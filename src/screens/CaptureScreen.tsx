@@ -30,6 +30,9 @@ const resolveCaptureDirectory = () => {
 };
 
 const CAPTURE_METADATA_DIR = `${resolveCaptureDirectory()}captures`;
+
+const sanitizeFilename = (value: string) =>
+  value.replace(/[^a-zA-Z0-9_-]/g, "-");
 const DEFAULT_MODE: CaptureMode = "photo";
 const DEFAULT_CAMERA: CameraType = "back";
 
@@ -157,7 +160,8 @@ const CaptureScreen: React.FC = () => {
 
 const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
     await ensureDirectory(CAPTURE_METADATA_DIR);
-    const metadataPath = `${CAPTURE_METADATA_DIR}/${receipt.assetId}.json`;
+    const safeAssetId = sanitizeFilename(receipt.assetId);
+    const metadataPath = `${CAPTURE_METADATA_DIR}/${safeAssetId}.json`;
     const record: CaptureReceipt = { ...receipt, metadataPath };
     await FileSystem.writeAsStringAsync(metadataPath, JSON.stringify(record, null, 2));
     setLastReceipt(record);

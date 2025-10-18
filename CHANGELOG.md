@@ -6,6 +6,7 @@
 - Replaced the settings placeholder with live device identity details and a confirmation-gated onboarding reset control.
 - Delivered the capture UI with Expo Camera support, zoom + facing toggles, signature-aware metadata sidecars, and local media-library persistence for photos and videos.
 - Updated capture dependencies (expo-media-library ~18.2.0, @react-native-community/slider ~5.0.1) and moved to safe-area/legacy filesystem APIs to resolve capture-time deprecation failures.
+- Normalized capture metadata filenames so iOS asset identifiers with path separators save signatures reliably.
 
 ## 2024-10-18
 - Initialized Expo TypeScript project scaffold and installed React Navigation dependencies.
