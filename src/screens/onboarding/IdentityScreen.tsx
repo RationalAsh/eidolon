@@ -17,6 +17,8 @@ import {
   getPublicKeyFingerprint,
   getStoredIdentity,
 } from "../../services/deviceIdentity";
+import { resetOnboardingState } from "../../services/onboardingReset";
+import { useConfirmation } from "../../hooks/useConfirmation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "OnboardingIdentity">;
 type IdentityStatus = "idle" | "generating" | "success";
@@ -44,9 +46,11 @@ const IdentityScreen: React.FC<Props> = ({ navigation }) => {
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
   const pulse = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confirm = useConfirmation();
 
   useEffect(() => {
     let isMounted = true;
@@ -149,8 +153,35 @@ const IdentityScreen: React.FC<Props> = ({ navigation }) => {
     navigation.navigate("OnboardingRegistry");
   }, [navigation]);
 
-  const canGenerate = status !== "generating" && status !== "success";
-  const canContinue = status === "success";
+  const handleReset = useCallback(() => {
+    confirm(
+      {
+        title: "Reset onboarding?",
+        message:
+          "This will delete the local device identity and attempt to remove the Supabase registry entry.",
+        confirmLabel: "Reset",
+      },
+      () => {
+        setResetting(true);
+        setError(null);
+        (async () => {
+          try {
+            await resetOnboardingState();
+            setIdentity(null);
+            setFingerprint(null);
+            setStatus("idle");
+          } catch (err) {
+            setError(parseError(err));
+          } finally {
+            setResetting(false);
+          }
+        })();
+      }
+    );
+  }, [confirm, parseError]);
+
+  const canGenerate = status !== "generating" && status !== "success" && !resetting;
+  const canContinue = status === "success" && !resetting;
 
   const scale = pulse.interpolate({
     inputRange: [0, 1],
@@ -229,6 +260,17 @@ const IdentityScreen: React.FC<Props> = ({ navigation }) => {
           onPress={handleContinue}
           disabled={!canContinue}
         />
+      </View>
+      <View style={styles.footer}>
+        <Button
+          title={resetting ? "Resetting…" : "Reset onboarding state"}
+          onPress={handleReset}
+          disabled={resetting}
+          color="#f1707a"
+        />
+        {resetting && (
+          <ActivityIndicator color="#f1707a" style={styles.resetSpinner} />
+        )}
       </View>
     </View>
   );
@@ -315,9 +357,15 @@ const styles = StyleSheet.create({
   actions: {
     gap: 12,
   },
+  footer: {
+    gap: 8,
+  },
   spinner: {
     marginTop: -6,
     marginBottom: -2,
+  },
+  resetSpinner: {
+    marginTop: 4,
   },
   mono: {
     fontFamily: Platform.select({

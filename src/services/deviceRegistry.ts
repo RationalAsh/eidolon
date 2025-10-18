@@ -71,3 +71,15 @@ export const confirmRegistration = async (
     return isRegisteredLocally();
   }
 };
+
+export const removeDeviceRegistration = async (identity: DeviceIdentity): Promise<void> => {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from("devices")
+    .delete()
+    .eq("device_id", identity.deviceId);
+
+  if (error) {
+    throw error;
+  }
+};

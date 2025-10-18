@@ -33,8 +33,8 @@ Adjust the policies as you progress toward authenticated flows.
 ## Screen Outline
 
 - **Intro** — brand splash (Eidolon, tagline, logo) with CTA into onboarding.
-- **Identity** — generates/stores device keys with a guided animation.
-- **Registry** — syncs the device with Supabase, highlighting RLS requirements.
+- **Identity** — generates/stores device keys with a guided animation (includes reset control).
+- **Registry** — syncs the device with Supabase, highlighting RLS requirements and offering a full reset.
 - **Calibration** — checklist for collecting flat/dark frames and deriving PRNU.
 - **Capture** — placeholder notes for camera integration, digest construction, and uploads.
 - **Verify** — placeholder flow for loading sidecars, recomputing residuals, and showing verdicts.

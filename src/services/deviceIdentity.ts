@@ -13,6 +13,7 @@ const LEGACY_KEYS = [
   "eidolon:deviceId",
   "eidolon:registered",
 ];
+const SECURE_STORE_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export type DeviceIdentity = {
   deviceId: string;
@@ -68,22 +69,31 @@ export const ensureIdentity = async (): Promise<DeviceIdentity> => {
   return { deviceId, publicKey, privateKey };
 };
 
-export const clearIdentity = async () => {
-  await Promise.all([
-    SecureStore.deleteItemAsync(DEVICE_ID_STORAGE_KEY),
-    SecureStore.deleteItemAsync(PUBLIC_KEY_STORAGE_KEY),
-    SecureStore.deleteItemAsync(PRIVATE_KEY_STORAGE_KEY),
-    SecureStore.deleteItemAsync(REGISTRATION_FLAG_STORAGE_KEY),
-  ]);
+const deleteSecureStoreKeys = async (keys: string[]) => {
   await Promise.all(
-    LEGACY_KEYS.map(async (key) => {
+    keys.map(async (key) => {
+      if (!SECURE_STORE_KEY_PATTERN.test(key)) {
+        // Legacy keys contained ":" and cannot be deleted once Expo enforced stricter names.
+        return;
+      }
       try {
         await SecureStore.deleteItemAsync(key);
       } catch (error) {
-        console.warn(`Skipping legacy SecureStore key cleanup for ${key}`, error);
+        console.warn(`Failed to remove key ${key}`, error);
       }
     })
   );
+};
+
+export const clearIdentity = async () => {
+  await deleteSecureStoreKeys([
+    DEVICE_ID_STORAGE_KEY,
+    PUBLIC_KEY_STORAGE_KEY,
+    PRIVATE_KEY_STORAGE_KEY,
+    REGISTRATION_FLAG_STORAGE_KEY,
+  ]);
+
+  await deleteSecureStoreKeys(LEGACY_KEYS);
 };
 
 export const markRegistered = async () => {

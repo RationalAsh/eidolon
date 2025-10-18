@@ -13,3 +13,4 @@
 - Replaced legacy SecureStore key names with underscore-based variants to satisfy platform constraints during onboarding.
 - Added Supabase RLS guidance and surfaced policy error messaging when device upsert is blocked.
 - Split onboarding into dedicated intro, identity, and registry screens with animated flows and updated navigation.
+- Added reusable "Reset onboarding state" controls (local + Supabase cleanup) to identity and registry screens plus shared confirmation hook.

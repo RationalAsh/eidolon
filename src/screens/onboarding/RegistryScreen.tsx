@@ -2,6 +2,7 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Button,
   Easing,
@@ -21,6 +22,8 @@ import {
   confirmRegistration,
   registerDevice,
 } from "../../services/deviceRegistry";
+import { resetOnboardingState } from "../../services/onboardingReset";
+import { useConfirmation } from "../../hooks/useConfirmation";
 
 type Props = NativeStackScreenProps<RootStackParamList, "OnboardingRegistry">;
 type RegistryStatus = "unknown" | "idle" | "registering" | "registered";
@@ -33,11 +36,13 @@ const RegistryScreen: React.FC<Props> = ({ navigation }) => {
   const [status, setStatus] = useState<RegistryStatus>("unknown");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  const [resetting, setResetting] = useState(false);
   const supabaseReady = isSupabaseConfigured();
 
   const pulse = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confirm = useConfirmation();
 
   const parseError = useCallback((err: unknown) => {
     if (err instanceof Error) {
@@ -206,8 +211,42 @@ const RegistryScreen: React.FC<Props> = ({ navigation }) => {
     status !== "idle" ||
     !identity ||
     !supabaseReady ||
-    checking;
-  const continueDisabled = status !== "registered";
+    checking ||
+    resetting;
+  const continueDisabled = status !== "registered" || resetting;
+
+  const handleReset = useCallback(() => {
+    confirm(
+      {
+        title: "Reset onboarding?",
+        message:
+          "This removes the local device identity and attempts to delete the Supabase registry record so you can start fresh.",
+        confirmLabel: "Reset",
+      },
+      () => {
+        setResetting(true);
+        setError(null);
+        (async () => {
+          try {
+            await resetOnboardingState();
+          } catch (err) {
+            const message = parseError(err);
+            setError(`${message} (Local keys removed; remote record may still exist).`);
+            Alert.alert(
+              "Supabase cleanup failed",
+              `${message}\n\nLocal keys were removed, but the remote record may remain.`
+            );
+          } finally {
+            setIdentity(null);
+            setFingerprint(null);
+            setStatus("idle");
+            setResetting(false);
+            navigation.replace("OnboardingIdentity");
+          }
+        })();
+      }
+    );
+  }, [confirm, navigation, parseError]);
 
   return (
     <View style={styles.container}>
@@ -274,6 +313,18 @@ const RegistryScreen: React.FC<Props> = ({ navigation }) => {
           onPress={handleContinue}
           disabled={continueDisabled}
         />
+      </View>
+
+      <View style={styles.footer}>
+        <Button
+          title={resetting ? "Resetting…" : "Reset onboarding state"}
+          onPress={handleReset}
+          color="#f1707a"
+          disabled={resetting}
+        />
+        {resetting && (
+          <ActivityIndicator color="#f1707a" style={styles.resetSpinner} />
+        )}
       </View>
     </View>
   );
@@ -360,9 +411,15 @@ const styles = StyleSheet.create({
   actions: {
     gap: 12,
   },
+  footer: {
+    gap: 8,
+  },
   spinner: {
     marginTop: -6,
     marginBottom: -2,
+  },
+  resetSpinner: {
+    marginTop: 4,
   },
   mono: {
     fontFamily: Platform.select({
