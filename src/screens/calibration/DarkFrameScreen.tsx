@@ -15,7 +15,8 @@ import * as FileSystem from "expo-file-system/legacy";
 import type { CalibrationStackParamList } from "./CalibrationNavigator";
 import { useCalibrationSession } from "../../context/CalibrationSessionContext";
 import { CALIBRATION_TARGET_FRAMES } from "./constants";
-import { saveCalibrationFrameFile } from "../../services/calibrationStorage";
+import { persistCalibrationFrame } from "../../services/calibrationStorage";
+import { createGrayscaleSampleFromBase64 } from "../../utils/prnu";
 
 type Props = NativeStackScreenProps<CalibrationStackParamList, "CalibrationDark">;
 
@@ -88,15 +89,18 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation }) => {
       photo.base64
     );
 
-    const storedUri = await saveCalibrationFrameFile("dark", photo.uri);
+    const sample = createGrayscaleSampleFromBase64(photo.base64);
+    const artifacts = await persistCalibrationFrame("dark", photo.uri, sample);
     addFrame("dark", {
-      uri: storedUri,
+      uri: artifacts.imageUri,
+      sampleUri: artifacts.sampleUri,
       hash,
-      width: photo.width,
-      height: photo.height,
+      width: sample.width,
+      height: sample.height,
     });
 
     await FileSystem.deleteAsync(photo.uri, { idempotent: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }, [addFrame]);
 
   const runCaptureSequence = useCallback(

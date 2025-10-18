@@ -86,10 +86,16 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         }
 
         const result = await computeFingerprintFromFrames(
-          flatFrames.map((frame) => frame.uri),
-          darkFrames.map((frame) => frame.uri),
-          flatFrames.map((frame) => frame.hash),
-          darkFrames.map((frame) => frame.hash)
+          flatFrames.map((frame) => ({
+            uri: frame.uri,
+            hash: frame.hash,
+            sampleUri: frame.sampleUri ?? undefined,
+          })),
+          darkFrames.map((frame) => ({
+            uri: frame.uri,
+            hash: frame.hash,
+            sampleUri: frame.sampleUri ?? undefined,
+          }))
         );
 
         if (!isMounted) {

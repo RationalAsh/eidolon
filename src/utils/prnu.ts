@@ -7,12 +7,8 @@ import {
   CALIBRATION_MATRIX_SIZE,
   CALIBRATION_HEATMAP_GRID,
 } from "../screens/calibration/constants";
-
-export type GrayscaleSample = {
-  width: number;
-  height: number;
-  data: Float32Array;
-};
+import { loadCalibrationSample } from "../services/calibrationStorage";
+import type { GrayscaleSample } from "../types/prnu";
 
 const GAUSSIAN_KERNEL = [
   1, 2, 1,
@@ -30,15 +26,10 @@ const yieldToEventLoop = async () =>
     setTimeout(resolve, 0);
   });
 
-export const loadGrayscaleSample = async (
-  uri: string,
+const decodeGrayscaleSampleFromBuffer = (
+  buffer: Uint8Array,
   targetSize: number = CALIBRATION_MATRIX_SIZE
-): Promise<GrayscaleSample> => {
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  const buffer = toByteArray(base64);
+): GrayscaleSample => {
   const decoded = jpeg.decode(buffer, { useTArray: true });
 
   if (!decoded || !decoded.data) {
@@ -52,19 +43,38 @@ export const loadGrayscaleSample = async (
   const yRatio = height / targetSize;
 
   for (let y = 0; y < targetSize; y += 1) {
-    const srcY = Math.floor(y * yRatio);
+    const srcY = Math.min(Math.floor(y * yRatio), height - 1);
     for (let x = 0; x < targetSize; x += 1) {
-      const srcX = Math.floor(x * xRatio);
+      const srcX = Math.min(Math.floor(x * xRatio), width - 1);
       const srcIndex = (srcY * width + srcX) * 4;
       const r = data[srcIndex];
       const g = data[srcIndex + 1];
       const b = data[srcIndex + 2];
-      gray[y * targetSize + x] =
-        (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      gray[y * targetSize + x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     }
   }
 
   return { width: targetSize, height: targetSize, data: gray };
+};
+
+export const createGrayscaleSampleFromBase64 = (
+  base64: string,
+  targetSize: number = CALIBRATION_MATRIX_SIZE
+): GrayscaleSample => {
+  const buffer = toByteArray(base64);
+  return decodeGrayscaleSampleFromBuffer(buffer, targetSize);
+};
+
+export const loadGrayscaleSample = async (
+  uri: string,
+  targetSize: number = CALIBRATION_MATRIX_SIZE
+): Promise<GrayscaleSample> => {
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  const buffer = toByteArray(base64);
+  return decodeGrayscaleSampleFromBuffer(buffer, targetSize);
 };
 
 export const gaussianBlur3x3 = (
@@ -236,6 +246,12 @@ const normaliseHeatmapValues = (heatmap: number[]): number[] => {
   return heatmap.map((value) => (value - min) / (max - min));
 };
 
+export type CalibrationFrameInput = {
+  uri: string;
+  hash: string;
+  sampleUri?: string | null;
+};
+
 export type FingerprintComputationResult = {
   fingerprint: Float32Array;
   descriptor: string;
@@ -249,17 +265,27 @@ const toArray = (vector: Float32Array) =>
     Math.round(value * 1_000_000) / 1_000_000
   );
 
+const loadSampleForFrame = async (
+  frame: CalibrationFrameInput,
+  targetSize?: number
+): Promise<GrayscaleSample> => {
+  if (frame.sampleUri) {
+    const sample = await loadCalibrationSample(frame.sampleUri);
+    return sample;
+  }
+
+  return loadGrayscaleSample(frame.uri, targetSize);
+};
+
 export const computeFingerprintFromFrames = async (
-  flatUris: string[],
-  darkUris: string[],
-  flatHashes: string[],
-  darkHashes: string[]
+  flatFrames: CalibrationFrameInput[],
+  darkFrames: CalibrationFrameInput[]
 ): Promise<FingerprintComputationResult> => {
-  if (flatUris.length === 0 || darkUris.length === 0) {
+  if (flatFrames.length === 0 || darkFrames.length === 0) {
     throw new Error("Missing calibration frames. Capture both flat and dark samples.");
   }
 
-  const firstFlat = await loadGrayscaleSample(flatUris[0]);
+  const firstFlat = await loadSampleForFrame(flatFrames[0]);
   const { width, height } = firstFlat;
   const vectorLength = width * height;
 
@@ -276,16 +302,16 @@ export const computeFingerprintFromFrames = async (
 
   processFlatSample(firstFlat);
 
-  for (let i = 1; i < flatUris.length; i += 1) {
-    const sample = await loadGrayscaleSample(flatUris[i], width);
+  for (let i = 1; i < flatFrames.length; i += 1) {
+    const sample = await loadSampleForFrame(flatFrames[i], width);
     processFlatSample(sample);
     if ((i + 1) % 3 === 0) {
       await yieldToEventLoop();
     }
   }
 
-  for (let i = 0; i < darkUris.length; i += 1) {
-    const sample = await loadGrayscaleSample(darkUris[i], width);
+  for (let i = 0; i < darkFrames.length; i += 1) {
+    const sample = await loadSampleForFrame(darkFrames[i], width);
     const residual = computeResidual(sample.data, width, height);
     addToAccumulator(darkAccumulator, residual);
     if ((i + 1) % 3 === 0) {
@@ -293,8 +319,8 @@ export const computeFingerprintFromFrames = async (
     }
   }
 
-  const avgFlatResidual = scaleVector(flatAccumulator, 1 / flatUris.length);
-  const avgDarkResidual = scaleVector(darkAccumulator, 1 / darkUris.length);
+  const avgFlatResidual = scaleVector(flatAccumulator, 1 / flatFrames.length);
+  const avgDarkResidual = scaleVector(darkAccumulator, 1 / darkFrames.length);
   const fingerprintRaw = subtractVectors(avgFlatResidual, avgDarkResidual);
   const fingerprint = normaliseVector(fingerprintRaw);
 
@@ -312,8 +338,8 @@ export const computeFingerprintFromFrames = async (
 
   const descriptorPayload = JSON.stringify({
     fingerprint: toArray(fingerprint),
-    flat: flatHashes,
-    dark: darkHashes,
+    flat: flatFrames.map((frame) => frame.hash),
+    dark: darkFrames.map((frame) => frame.hash),
   });
 
   const descriptor = await Crypto.digestStringAsync(

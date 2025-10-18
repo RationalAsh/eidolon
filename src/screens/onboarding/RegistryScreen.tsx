@@ -187,7 +187,10 @@ const RegistryScreen: React.FC<Props> = ({ navigation }) => {
   }, [identity, parseError, runSuccessAnimation, supabaseReady]);
 
   const handleContinue = useCallback(() => {
-    navigation.replace("Calibration");
+    navigation.reset({
+      index: 0,
+      routes: [{ name: "MainTabs" }],
+    });
   }, [navigation]);
 
   const fingerprintDisplay = useMemo(() => {
@@ -309,7 +312,7 @@ const RegistryScreen: React.FC<Props> = ({ navigation }) => {
           <ActivityIndicator color="#5da9ff" style={styles.spinner} />
         )}
         <Button
-          title="Continue to calibration"
+          title="Enter app"
           onPress={handleContinue}
           disabled={continueDisabled}
         />

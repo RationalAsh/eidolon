@@ -9,7 +9,6 @@ import {
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import CalibrationNavigator from "../screens/calibration/CalibrationNavigator";
 import CaptureScreen from "../screens/CaptureScreen";
 import OnboardingIntroScreen from "../screens/onboarding/IntroScreen";
 import OnboardingIdentityScreen from "../screens/onboarding/IdentityScreen";
@@ -21,7 +20,6 @@ export type RootStackParamList = {
   OnboardingIntro: undefined;
   OnboardingIdentity: undefined;
   OnboardingRegistry: undefined;
-  Calibration: undefined;
   MainTabs: undefined;
 };
 
@@ -108,11 +106,6 @@ const AppNavigator: React.FC = () => {
           name="OnboardingRegistry"
           component={OnboardingRegistryScreen}
           options={{ title: "Register Device" }}
-        />
-        <Stack.Screen
-          name="Calibration"
-          component={CalibrationNavigator}
-          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="MainTabs"

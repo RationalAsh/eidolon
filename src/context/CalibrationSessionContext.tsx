@@ -11,6 +11,7 @@ export type CapturedFrame = {
   capturedAt: string;
   width?: number;
   height?: number;
+  sampleUri?: string | null;
 };
 
 type FrameInput = {
@@ -18,6 +19,7 @@ type FrameInput = {
   hash: string;
   width?: number;
   height?: number;
+  sampleUri?: string | null;
 };
 
 export type FingerprintState = {
@@ -46,6 +48,7 @@ const createFrame = (type: FrameType, frame: FrameInput): CapturedFrame => ({
   hash: frame.hash,
   width: frame.width,
   height: frame.height,
+  sampleUri: frame.sampleUri,
   capturedAt: new Date().toISOString(),
 });
 
