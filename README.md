@@ -8,6 +8,7 @@ Hackathon-oriented Expo app that anchors captured media to device-specific entro
 - `npm install` (already run during scaffolding, rerun if dependencies change).
 - `npm run start` to launch Expo CLI, then open on iOS, Android, or web.
 - Project uses TypeScript and React Navigation (stack + tabs).
+- Grant camera permissions in Expo Go to walk through the calibration capture flow.
 
 ### Supabase Setup
 
@@ -35,7 +36,7 @@ Adjust the policies as you progress toward authenticated flows.
 - **Intro** — brand splash (Eidolon, tagline, logo) with CTA into onboarding.
 - **Identity** — generates/stores device keys with a guided animation (includes reset control).
 - **Registry** — syncs the device with Supabase, highlighting RLS requirements and offering a full reset.
-- **Calibration** — mini flow covering flat-frame capture, dark-frame capture, and residual processing heatmap preview.
+- **Calibration** — mini flow capturing real frames (front camera), collecting dark noise, and crunching a persisted fingerprint + heatmap preview.
 - **Capture** — placeholder notes for camera integration, digest construction, and uploads.
 - **Verify** — placeholder flow for loading sidecars, recomputing residuals, and showing verdicts.
 - **Settings** — hooks for device metadata, ping configuration, and developer utilities.

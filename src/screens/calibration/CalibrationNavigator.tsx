@@ -5,6 +5,7 @@ import {
 import FlatFrameScreen from "./FlatFrameScreen";
 import DarkFrameScreen from "./DarkFrameScreen";
 import ProcessingScreen from "./ProcessingScreen";
+import { CalibrationProvider } from "../../context/CalibrationSessionContext";
 
 export type CalibrationStackParamList = {
   CalibrationFlat: undefined;
@@ -26,28 +27,29 @@ const screenOptions: NativeStackNavigationOptions = {
 
 const CalibrationNavigator: React.FC = () => {
   return (
-    <Stack.Navigator
-      initialRouteName="CalibrationFlat"
-      screenOptions={screenOptions}
-    >
-      <Stack.Screen
-        name="CalibrationFlat"
-        component={FlatFrameScreen}
-        options={{ title: "Calibrate: Flat Frames" }}
-      />
-      <Stack.Screen
-        name="CalibrationDark"
-        component={DarkFrameScreen}
-        options={{ title: "Calibrate: Dark Frames" }}
-      />
-      <Stack.Screen
-        name="CalibrationProcess"
-        component={ProcessingScreen}
-        options={{ title: "Processing PRNU" }}
-      />
-    </Stack.Navigator>
+    <CalibrationProvider>
+      <Stack.Navigator
+        initialRouteName="CalibrationFlat"
+        screenOptions={screenOptions}
+      >
+        <Stack.Screen
+          name="CalibrationFlat"
+          component={FlatFrameScreen}
+          options={{ title: "Calibrate: Flat Frames" }}
+        />
+        <Stack.Screen
+          name="CalibrationDark"
+          component={DarkFrameScreen}
+          options={{ title: "Calibrate: Dark Frames" }}
+        />
+        <Stack.Screen
+          name="CalibrationProcess"
+          component={ProcessingScreen}
+          options={{ title: "Processing PRNU" }}
+        />
+      </Stack.Navigator>
+    </CalibrationProvider>
   );
 };
 
 export default CalibrationNavigator;
-

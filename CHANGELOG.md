@@ -14,4 +14,4 @@
 - Added Supabase RLS guidance and surfaced policy error messaging when device upsert is blocked.
 - Split onboarding into dedicated intro, identity, and registry screens with animated flows and updated navigation.
 - Added reusable "Reset onboarding state" controls (local + Supabase cleanup) to identity and registry screens plus shared confirmation hook.
-- Replaced calibration placeholder with a three-step navigator (flat frames, dark frames, animated residual processing) including heatmap preview.
+- Replaced calibration placeholder with a three-step navigator (flat frames, dark frames, animated residual processing) wired to Expo Camera, persisted hashes, and an animated heatmap preview.

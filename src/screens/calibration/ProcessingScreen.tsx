@@ -1,20 +1,22 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Button,
   Easing,
+  Platform,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import * as Crypto from "expo-crypto";
 import type { CalibrationStackParamList } from "./CalibrationNavigator";
+import { useCalibrationSession } from "../../context/CalibrationSessionContext";
+import {
+  FingerprintRecord,
+  saveFingerprintRecord,
+} from "../../services/calibrationStorage";
+import { CALIBRATION_TARGET_FRAMES } from "./constants";
 
 type Props = NativeStackScreenProps<CalibrationStackParamList, "CalibrationProcess">;
 
@@ -27,19 +29,106 @@ const PROCESS_STEPS = [
 
 const HEATMAP_SIZE = 8;
 
-const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { flatFramesCaptured, darkFramesCaptured } = route.params;
+const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
+  const { flatFrames, darkFrames, setFingerprintDescriptor } = useCalibrationSession();
+  const flatCount = flatFrames.length;
+  const darkCount = darkFrames.length;
   const [stepIndex, setStepIndex] = useState(0);
   const [completed, setCompleted] = useState(false);
+  const [descriptor, setDescriptor] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const heatmapAnim = useRef(new Animated.Value(0)).current;
   const waveAnim = useRef(new Animated.Value(0)).current;
-  const heatmapSeeds = useMemo(
-    () =>
-      Array.from({ length: HEATMAP_SIZE * HEATMAP_SIZE }, () => ({
-        intensity: Math.random(),
-      })),
-    []
+  const [heatmapValues, setHeatmapValues] = useState<number[]>(() =>
+    Array.from({ length: HEATMAP_SIZE * HEATMAP_SIZE }, () => Math.random())
   );
+  const fingerprintSaved = useRef(false);
+
+  const parseError = useCallback((err: unknown) => {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    if (typeof err === "string") {
+      return err;
+    }
+    if (err && typeof err === "object" && "message" in err) {
+      const message = (err as { message?: unknown }).message;
+      return typeof message === "string"
+        ? message
+        : "Unexpected error encountered.";
+    }
+    return "Unexpected error encountered.";
+  }, []);
+
+  const descriptorToValues = useCallback((digest: string): number[] => {
+    const values: number[] = [];
+    const pairs = digest.match(/.{1,2}/g) ?? [];
+    const totalCells = HEATMAP_SIZE * HEATMAP_SIZE;
+
+    for (let i = 0; i < totalCells; i += 1) {
+      const pair = pairs[i % pairs.length] ?? "ff";
+      const numeric = parseInt(pair, 16);
+      values.push(numeric / 255);
+    }
+
+    return values;
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const processFingerprint = async () => {
+      try {
+        if (
+          flatCount < CALIBRATION_TARGET_FRAMES ||
+          darkCount < CALIBRATION_TARGET_FRAMES
+        ) {
+          throw new Error("Insufficient calibration frames. Please restart the calibration flow.");
+        }
+
+        const payload = JSON.stringify({
+          flat: flatFrames.map((frame) => frame.hash),
+          dark: darkFrames.map((frame) => frame.hash),
+        });
+
+        const digest = await Crypto.digestStringAsync(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          payload
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        setDescriptor(digest);
+        setFingerprintDescriptor(digest);
+        const values = descriptorToValues(digest);
+        setHeatmapValues(values);
+
+        if (!fingerprintSaved.current) {
+          const record: FingerprintRecord = {
+            descriptor: digest,
+            createdAt: new Date().toISOString(),
+            flatFrames: flatCount,
+            darkFrames: darkCount,
+            heatmap: values,
+          };
+          await saveFingerprintRecord(record);
+          fingerprintSaved.current = true;
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(parseError(err));
+        }
+      }
+    };
+
+    processFingerprint();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [darkCount, darkFrames, descriptorToValues, flatCount, flatFrames, parseError, setFingerprintDescriptor]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -114,10 +203,10 @@ const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Processing sensor fingerprint</Text>
         <Text style={styles.summaryText}>
-          Flat frames: <Text style={styles.emphasis}>{flatFramesCaptured}</Text>
+          Flat frames: <Text style={styles.emphasis}>{flatCount}</Text>
         </Text>
         <Text style={styles.summaryText}>
-          Dark frames: <Text style={styles.emphasis}>{darkFramesCaptured}</Text>
+          Dark frames: <Text style={styles.emphasis}>{darkCount}</Text>
         </Text>
         <Text style={styles.summaryHint}>
           We align, denoise, subtract, and normalise to derive the device-specific PRNU residual.
@@ -145,11 +234,9 @@ const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
           ]}
         />
         <View style={styles.heatmap}>
-          {heatmapSeeds.map((seed, index) => {
-            const key = `cell-${index}`;
-            const intensity = seed.intensity;
-            const cool = `rgba(60, 90, 150, ${0.25 + intensity * 0.25})`;
-            const warm = `rgba(255, 120, 60, ${0.35 + intensity * 0.45})`;
+          {heatmapValues.map((value, index) => {
+            const cool = `rgba(60, 90, 150, ${0.25 + value * 0.25})`;
+            const warm = `rgba(255, 120, 60, ${0.35 + value * 0.45})`;
             const backgroundColor = heatmapAnim.interpolate({
               inputRange: [0, 1],
               outputRange: [cool, warm],
@@ -157,7 +244,7 @@ const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
 
             return (
               <Animated.View
-                key={key}
+                key={`cell-${index}`}
                 style={[styles.heatCell, { backgroundColor }]}
               />
             );
@@ -170,6 +257,20 @@ const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text style={styles.legendLabel}>High correlation</Text>
         </View>
       </View>
+
+      {descriptor && (
+        <View style={styles.descriptorBox}>
+          <Text style={styles.descriptorLabel}>Fingerprint descriptor</Text>
+          <Text style={styles.descriptorValue}>{descriptor.slice(0, 32)}…</Text>
+        </View>
+      )}
+
+      {error && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorLabel}>Issue</Text>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
 
       <View style={styles.stepper}>
         {PROCESS_STEPS.map((step, index) => (
@@ -195,7 +296,7 @@ const ProcessingScreen: React.FC<Props> = ({ navigation, route }) => {
       <Button
         title={completed ? "View capture workspace" : "Crunching sensor noise…"}
         onPress={handleContinue}
-        disabled={!completed}
+        disabled={!completed || !!error}
       />
     </View>
   );
@@ -279,6 +380,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#8b95ac",
   },
+  descriptorBox: {
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: "#0f1b2d",
+    gap: 6,
+  },
+  descriptorLabel: {
+    fontSize: 12,
+    color: "#8b95ac",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  descriptorValue: {
+    fontSize: 14,
+    color: "#f6f9ff",
+    fontFamily: Platform.select({
+      ios: "Menlo",
+      android: "monospace",
+      default: "Courier",
+    }),
+  },
   stepper: {
     gap: 10,
   },
@@ -309,7 +431,22 @@ const styles = StyleSheet.create({
     color: "#f6f9ff",
     fontWeight: "600",
   },
+  errorBox: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 95, 109, 0.16)",
+    gap: 4,
+  },
+  errorLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#ff8b94",
+    textTransform: "uppercase",
+  },
+  errorText: {
+    fontSize: 13,
+    color: "#ffd3d6",
+  },
 });
 
 export default ProcessingScreen;
-

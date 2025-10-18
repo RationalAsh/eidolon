@@ -1,0 +1,1 @@
+export const CALIBRATION_TARGET_FRAMES = 30;

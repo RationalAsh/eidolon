@@ -1,6 +1,7 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   Button,
   Easing,
@@ -8,16 +9,41 @@ import {
   Text,
   View,
 } from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Crypto from "expo-crypto";
+import * as FileSystem from "expo-file-system";
 import type { CalibrationStackParamList } from "./CalibrationNavigator";
+import { useCalibrationSession } from "../../context/CalibrationSessionContext";
+import { CALIBRATION_TARGET_FRAMES } from "./constants";
+import { saveCalibrationFrameFile } from "../../services/calibrationStorage";
 
 type Props = NativeStackScreenProps<CalibrationStackParamList, "CalibrationDark">;
 
-const TARGET_FRAMES = 30;
-
-const DarkFrameScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { flatFramesCaptured } = route.params;
-  const [captured, setCaptured] = useState(0);
+const DarkFrameScreen: React.FC<Props> = ({ navigation }) => {
+  const cameraRef = useRef<CameraView>(null);
+  const [permission, requestPermission] = useCameraPermissions();
+  const { flatFrames, darkFrames, addFrame } = useCalibrationSession();
+  const flatCount = flatFrames.length;
+  const captured = darkFrames.length;
   const animatedBar = useRef(new Animated.Value(0)).current;
+  const [capturing, setCapturing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const parseError = useCallback((err: unknown) => {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    if (typeof err === "string") {
+      return err;
+    }
+    if (err && typeof err === "object" && "message" in err) {
+      const message = (err as { message?: unknown }).message;
+      return typeof message === "string"
+        ? message
+        : "Unexpected error encountered.";
+    }
+    return "Unexpected error encountered.";
+  }, []);
 
   const animateProgress = useCallback(
     (toValue: number) => {
@@ -31,30 +57,85 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation, route }) => {
     [animatedBar]
   );
 
-  const handleCapture = useCallback(() => {
-    setCaptured((prev) => {
-      const next = Math.min(prev + 1, TARGET_FRAMES);
-      animateProgress(next / TARGET_FRAMES);
-      return next;
-    });
-  }, [animateProgress]);
+  useEffect(() => {
+    animateProgress(Math.min(captured / CALIBRATION_TARGET_FRAMES, 1));
+  }, [animateProgress, captured]);
 
-  const handleReset = useCallback(() => {
-    setCaptured(0);
-    animateProgress(0);
-  }, [animateProgress]);
+  useEffect(() => {
+    if (!permission) {
+      requestPermission().catch((err) => setError(parseError(err)));
+    }
+  }, [parseError, permission, requestPermission]);
+
+  const handleCapture = useCallback(async () => {
+    if (capturing || !cameraRef.current) {
+      return;
+    }
+    setError(null);
+    setCapturing(true);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.4,
+        base64: true,
+        skipProcessing: true,
+      });
+
+      if (!photo?.uri || !photo.base64) {
+        throw new Error("Camera capture failed — missing image data");
+      }
+
+      const hash = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        photo.base64
+      );
+
+      const storedUri = await saveCalibrationFrameFile("dark", photo.uri);
+      addFrame("dark", {
+        uri: storedUri,
+        hash,
+        width: photo.width,
+        height: photo.height,
+      });
+
+      await FileSystem.deleteAsync(photo.uri, { idempotent: true });
+    } catch (err) {
+      setError(parseError(err));
+    } finally {
+      setCapturing(false);
+    }
+  }, [addFrame, capturing, parseError]);
 
   const handleContinue = useCallback(() => {
     navigation.navigate("CalibrationProcess", {
-      flatFramesCaptured,
+      flatFramesCaptured: flatCount,
       darkFramesCaptured: captured,
     });
-  }, [captured, flatFramesCaptured, navigation]);
+  }, [captured, flatCount, navigation]);
 
   const progressWidth = animatedBar.interpolate({
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   });
+
+  if (!permission) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator color="#5da9ff" />
+        <Text style={styles.permissionText}>Requesting camera access…</Text>
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.permissionText}>
+          Camera access is required for the dark-frame capture step.
+        </Text>
+        <Button title="Grant camera permission" onPress={requestPermission} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -63,10 +144,17 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation, route }) => {
         <Text style={styles.subtitle}>
           Cover the lens completely or place the device face-down. We capture only sensor read noise to subtract from the flat reference.
         </Text>
+        <Text style={styles.helper}>Flat frames collected: {flatCount}</Text>
       </View>
 
       <View style={styles.preview}>
         <View style={styles.previewInner}>
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            facing="front"
+            mode="picture"
+          />
           <View style={styles.previewMask} />
           <Text style={styles.previewHint}>Dark frame capture mode</Text>
         </View>
@@ -76,7 +164,7 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation, route }) => {
         <View style={styles.progressHeader}>
           <Text style={styles.progressLabel}>Frames captured</Text>
           <Text style={styles.progressCount}>
-            {captured}/{TARGET_FRAMES}
+            {captured}/{CALIBRATION_TARGET_FRAMES}
           </Text>
         </View>
         <View style={styles.progressBar}>
@@ -85,17 +173,27 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation, route }) => {
           />
         </View>
         <Text style={styles.progressHelper}>
-          Target: {TARGET_FRAMES} dark frames. Keep the device steady to avoid stray light leakage.
+          Target: {CALIBRATION_TARGET_FRAMES} dark frames. Keep the device steady to avoid stray light leakage.
         </Text>
       </View>
 
+      {error && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorLabel}>Issue</Text>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
       <View style={styles.actions}>
-        <Button title="Capture frame" onPress={handleCapture} />
-        <Button title="Reset session" onPress={handleReset} color="#f1707a" />
+        <Button
+          title={capturing ? "Capturing…" : "Capture frame"}
+          onPress={handleCapture}
+          disabled={capturing || captured >= CALIBRATION_TARGET_FRAMES}
+        />
         <Button
           title="Compute sensor residual"
           onPress={handleContinue}
-          disabled={captured < TARGET_FRAMES}
+          disabled={captured < CALIBRATION_TARGET_FRAMES || capturing}
         />
       </View>
     </View>
@@ -135,22 +233,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1f2a3d",
     backgroundColor: "#070d1a",
-    justifyContent: "center",
-    alignItems: "center",
     position: "relative",
+    overflow: "hidden",
+    justifyContent: "flex-end",
+    alignItems: "center",
+  },
+  camera: {
+    ...StyleSheet.absoluteFillObject,
   },
   previewMask: {
-    position: "absolute",
-    top: 20,
-    left: 20,
-    right: 20,
-    bottom: 20,
-    borderRadius: 12,
-    backgroundColor: "rgba(15, 25, 50, 0.8)",
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5, 10, 20, 0.78)",
   },
   previewHint: {
     fontSize: 14,
-    color: "#7b88a6",
+    color: "#f6f9ff",
+    marginBottom: 16,
+    backgroundColor: "rgba(5, 11, 20, 0.55)",
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
   progressSection: {
     gap: 8,
@@ -187,7 +289,39 @@ const styles = StyleSheet.create({
   actions: {
     gap: 12,
   },
+  helper: {
+    fontSize: 12,
+    color: "#8b95ac",
+  },
+  errorBox: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 95, 109, 0.16)",
+    gap: 4,
+  },
+  errorLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#ff8b94",
+    textTransform: "uppercase",
+  },
+  errorText: {
+    fontSize: 13,
+    color: "#ffd3d6",
+  },
+  centered: {
+    flex: 1,
+    backgroundColor: "#050b14",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+    padding: 24,
+  },
+  permissionText: {
+    fontSize: 15,
+    color: "#d4d9e6",
+    textAlign: "center",
+  },
 });
 
 export default DarkFrameScreen;
-
