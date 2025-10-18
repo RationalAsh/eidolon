@@ -5,18 +5,15 @@ const VerifyScreen: React.FC = () => {
     <View style={styles.container}>
       <Text style={styles.title}>Verify</Text>
       <Text style={styles.body}>
-        TODO: Select a media item or fetch by hash, recompute the residual
-        statistics, and compare against stored receipt metrics. Show verdicts
-        and a timeline of nearby reality pings.
+        TODO: Select a media item or fetch by digest, pull the matching receipt
+        from Supabase, and verify the Ed25519 signature. Summarize metadata and
+        show any nearby reality pings.
       </Text>
       <Text style={styles.todo}>
-        • Pull receipts from Supabase by media hash or sidecar reference.
+        • Query Supabase `device_receipt_signatures` by asset id / digest.
       </Text>
       <Text style={styles.todo}>
-        • Re-run Ed25519 signature checks and correlation thresholds.
-      </Text>
-      <Text style={styles.todo}>
-        • Visualize PRNU correlation and entropy deltas for judges.
+        • Re-run Ed25519 signature checks locally and surface verdicts.
       </Text>
     </View>
   );
@@ -46,4 +43,3 @@ const styles = StyleSheet.create({
 });
 
 export default VerifyScreen;
-

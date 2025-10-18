@@ -1,7 +1,6 @@
 import { isSupabaseConfigured } from "../lib/supabaseClient";
 import { clearIdentity, getStoredIdentity } from "./deviceIdentity";
 import { removeDeviceRegistration } from "./deviceRegistry";
-import { clearCalibrationData } from "./calibrationStorage";
 
 type ResetOptions = {
   skipSupabase?: boolean;
@@ -23,7 +22,6 @@ export const resetOnboardingState = async (
   }
 
   await clearIdentity();
-  await clearCalibrationData();
 
   if (supabaseError) {
     throw supabaseError;

@@ -2,7 +2,7 @@ Eidolon Demo (Hackathon MVP)
 
 Project summary (one-liner)
 
-A mobile-first proof-of-concept that cryptographically anchors media to device-specific sensor noise + ephemeral entropy and publishes verifiable receipts to a trust registry (Supabase). Users can capture media (photo/audio/text), produce a signed receipt, send reality pings, and later verify whether a chosen media item is authentic for this device+moment.
+A mobile-first proof-of-concept that cryptographically anchors captured media to a device-held Ed25519 key, stores signed receipts locally, and syncs those receipts to Supabase for later lookup. Users can capture photos/video, generate a signature sidecar, push receipts to the trust registry, and verify authenticity by querying the database.
 
 ⸻
 
@@ -10,20 +10,20 @@ High-level architecture
 
 [Expo Mobile App] <-> HTTPS REST / WebSocket <-> [Supabase (Auth, Postgres) + Storage (S3/MinIO)]
            |                                  \
-           |                                   -> [Optional Verifier Service (FastAPI)] 
+           |                                   -> [Optional Verifier Service (FastAPI)]
            v
  Local device components:
    - Key store (Ed25519 private key; stored in SecureStore / Keystore)
-   - PRNU module (calibration + residual extraction)
    - Capture module (camera/audio)
    - Receipt generator (digest builder, signing, sidecar writer)
+   - Supabase sync worker (publishes receipts and optional pings)
 
 Components:
 	•	Mobile app (Expo React Native) — UI + capture + signing + verification client.
-	•	Supabase backend — Auth, device registry (pubkeys), receipts table, storage of sidecars, optional CDN for media.
-	•	Verifier microservice (optional) — stateless service to recompute residuals, validate receipts and return human-friendly verdicts (can be serverless / Cloud Function).
-	•	Storage — object store for media files and sidecars (Supabase Storage or S3/MinIO).
-	•	DevOps — CI for building app, running tests, and deploying verifier.
+	•	Supabase backend — Auth, device registry (pubkeys), `device_receipt_signatures` table, optional storage for media.
+	•	Verifier microservice (optional) — thin service to fetch records from Supabase and run server-side Ed25519.verify for web clients.
+	•	Storage — object store for media files or sidecars if we later upload originals.
+	•	DevOps — CI for building the Expo app, running tests, and deploying any verifier functions.
 
 ⸻
 
@@ -31,209 +31,143 @@ Data & Crypto primitives
 	•	Asymmetric keys: Ed25519 (fast, widely supported).
 	•	Private key kept on-device only (SecureStore / iOS Keychain / Android Keystore).
 	•	Public key uploaded to Supabase registry on device onboarding.
-	•	Key derivation / fingerprints: HKDF-SHA256 used to derive ephemeral seeds from residual data when needed.
 	•	Hashes: SHA-256 for content digests.
-	•	Serialization: CBOR for compact binary receipts; JSON for human readability / debugging.
-	•	Signature envelope: { digest: bytes(CBOR), sig: base64(Ed25519(digest)), pubkey: base58(pubkey) }
-	•	Sidecar: JSON or XMP embedded file that contains receipt, PRNU metadata, and verification hints. Default: JSON sidecar stored alongside media in storage.
+	•	Serialization: JSON receipts stored locally; Supabase rows map fields directly.
+	•	Signature envelope: `{ digest: sha256(media_bytes), sig: base64(Ed25519(digest)), pubkey: base64(pubkey) }` with extra metadata (dimensions, camera, zoom, etc).
+	•	Sidecar: JSON file saved alongside captured media; contains receipt payload + signature + Supabase sync markers.
 
 ⸻
 
-Onboarding / calibration process
+Onboarding flow
 	1.	Generate keypair
-	•	Generate Ed25519 keypair on first run.
-	•	Store private key in SecureStore/Keystore; export public key for Supabase registry.
+		•	Generate Ed25519 keypair on first run.
+		•	Store private key in SecureStore/Keystore; export public key for Supabase registry.
 	2.	Device registration
-	•	POST /devices to Supabase with { device_id, pubkey, device_metadata }.
-	•	Supabase verifies ownership by challenging the client to sign a nonce and return the signed nonce.
-	3.	PRNU calibration (sensor fingerprint extraction)
-	•	User is guided to:
-	•	Capture N flat frames: point camera at evenly-lit white surface (e.g., white paper) for M frames (e.g., 30–50).
-	•	Capture N dark frames: cover lens to capture dark-current/read-noise for M frames (e.g., 30).
-	•	On-device compute:
-	•	median_flat = median(frames_flat)
-	•	median_dark = median(frames_dark)
-	•	K_raw = (median_flat - gaussian_blur(median_flat))  (approx PRNU estimate)
-	•	Normalize and quantize: K = normalize(K_raw) (store as float32 array or compressed PNG).
-	•	Store K locally only (private), and publish a public fingerprint descriptor (hashed summary, not raw K) to Supabase for later verification:
-	•	fingerprint_descriptor = sha256(cbor({ sensor_model, image_size, hash_stats_of_K }))
-	•	Save calibration metadata in SecureStore.
-
-Notes:
-	•	If RAW capture available: prefer RAW frames. For hackathon, high-quality JPEG is okay.
+		•	POST /devices to Supabase with `{ device_id, pubkey, device_metadata }`.
+		•	Supabase verifies ownership via signed nonce challenge.
+		•	Client caches a `registered` flag to skip onboarding next launch.
 
 ⸻
 
 Capture / receipt generation flow (per capture)
-	1.	Capture I (photo or audio frame(s)) and gather optional sensors: IMU burst (100–500ms), GPS (coarse), ambient audio snippet (1s).
-	2.	Compute image residual R:
-	•	I_lp = gaussian_blur(I, kernel=5)
-	•	R = I - I_lp
-	•	Optionally run wavelet/high-pass or use a small CNN residual extractor when available.
-	3.	Compute PRNU correlation:
-	•	corr = normalized_cross_correlation(R, K) for same resolution patches or multi-scale patch correlation.
-	4.	Compute ephemeral entropy features:
-	•	Residual histogram entropy H
-	•	DCT mid/high-band energy vector DCT_sketch = topN_quantized_bins(dct(R))
-	•	Rolling-shutter line variance (for video) RS_var
-	•	IMU micro-vibration stats if available: mean/std/kurtosis
-	5.	Build digest_payload (CBOR):
-
+	1.	Capture media (photo/video) and optional contextual sensors (GPS grid, IMU snapshot).
+	2.	Compute SHA-256 digest over the captured bytes.
+	3.	Assemble receipt payload:
+```
 {
-  "version": "EntropyCam-0.1",
-  "img_hash": "sha256(bytes_of_I)",
+  "version": "ReceiptSync-0.2",
   "device_id": "<device_id>",
-  "ts": "2025-10-18T12:34:56Z",
-  "img_w": 4032,
-  "img_h": 3024,
-  "prnu_corr": 0.037,
-  "r_entropy": 7.34,
-  "dct_sketch": [123,45,67,...],          // quantized ints
-  "imu_sketch": { "var": 0.002, "kurt": 2.1 },
-  "gps_grid": "SG-XXXXX",                 // coarse grid ID (optional)
-  "orig_format": "jpeg",
-  "extra": { ... }                        // optional metadata
+  "asset_id": "<platform asset identifier>",
+  "digest": "<sha256>",
+  "media_type": "photo" | "video",
+  "signed_at": "2025-10-18T12:34:56Z",
+  "byte_length": 1234567,
+  "width": 4032,
+  "height": 3024,
+  "duration": 2.4,             // for video
+  "camera_facing": "back",
+  "zoom": 0.27,
+  "extra": {
+    "gps_grid": "SG-XXXXX",
+    "source_uri": "file://..."
+  }
 }
-
-	6.	digest = CBOR.encode(digest_payload)
-sig = Ed25519.sign(digest, privkey)
-receipt = { digest, sig } (store both as sidecar JSON + upload to registry)
-	7.	Optionally embed a low-strength spread-spectrum watermark back into the image (derived from HKDF(digest)) to increase robustness; store watermark parameters in sidecar.
-
-Store/upload:
-	•	Store original media in Storage at s3://bucket/media/<sha256>.jpg
-	•	Store sidecar at s3://bucket/sidecars/<sha256>.json and insert a row into receipts table: {sha256, device_id, pubkey, ts, sig, digest_path, media_path}
+```
+	4.	Sign `sha256` (or canonical CBOR/JSON digest) with the device private key.
+	5.	Write a JSON sidecar locally: `{ payload, signature, public_key, syncedAt, supabaseId }`.
+	6.	Save the media to the device photo library (for demo viewing).
 
 ⸻
 
-Reality pings (server-verified assertions)
+Supabase sync (device side)
+	•	A background action (currently manual via Settings) scans local sidecars.
+	•	For each unsigned row, call `device_receipt_signatures.upsert` with payload + signature.
+	•	Store `syncedAt` and the returned Supabase row id in the sidecar.
+	•	Optional: future work to push media bytes to Supabase Storage keyed by digest.
 
-Purpose: produce short, frequent signed attestations of device state that can act as “proof-of-presence/time” anchors separate from any single media capture.
+⸻
+
+Reality pings (optional presence attestations)
 
 On-device:
-	•	Every N seconds/minutes (user-configurable) create a ping:
-
-{
-  "type": "ping",
-  "device_id": "...",
-  "ts": "2025-10-18T12:35:00Z",
-  "gps_grid": "SG-XXXXX",
-  "wifi_hash": sha256(sorted_wifi_ssids),
-  "imu_stats": { ... },
-  "nonce": random_32_bytes()
-}
-
-	•	CBOR-encode, sign with Ed25519.
-	•	POST /pings to Supabase (or verifier service) with {pubkey, cbordata, sig}
+	•	Periodically build a ping payload (device id, coarse GPS grid, wifi hash, IMU stats).
+	•	Sign and POST to `/pings`.
 
 Server:
-	•	Stores pings in pings table as immutable records; optionally run lightweight checks (GPS plausibility, duplicate detection).
-	•	Returns ping_id receipt ping://<id> which can be referenced by media receipts to show presence evidence near capture time.
+	•	Stores immutable ping records for later context display.
 
-Use in verification:
-	•	For a media receipt with timestamp ts, verifier fetches pings with ts +/- delta and shows whether a matching ping exists for that device and coarse location.
-
-Privacy note: GPS can be coarse (grid-level) to avoid leaking precise location; use hashed or truncated coordinates.
+Verification UI can correlate receipt timestamps with nearby pings to show “presence” evidence.
 
 ⸻
 
 Verification flow
 
-Verifier (client or server-side) steps when user selects a media file:
-	1.	Compute sha256(media_bytes) → lookup receipts table or sidecar.
-	2.	Pull receipt and pubkey from registry.
-	3.	Verify signature: Ed25519.verify(sig, digest, pubkey) → cryptographic integrity.
-	4.	Recompute physical features from the media:
-	•	Recompute R, prnu_corr, r_entropy, dct_sketch.
-	•	If watermark present: try to detect the spread-spectrum watermark derived from digest.
-	5.	Compare recomputed metrics to values in digest_payload:
-	•	Use pre-defined thresholds and an aggregation score S.
-	•	Example rule-of-thumb thresholds (tunable through ROC during dev):
-	•	prnu_corr match within ±0.01
-	•	r_entropy within ±10%
-	•	dct_sketch Hamming distance ≤ K
-	•	Output verdict:
-	•	VERIFIED: signature valid + physical metrics within thresholds (+ping present)
-	•	SUSPECT: signature valid but physical metrics drift (possible benign transform)
-	•	FORGED: signature invalid OR physical metrics impossible (zero corr + high mismatch)
-	•	UNVERIFIABLE: no signature/sidecar
-	6.	Display a human-friendly UI with:
-	•	Crypto badge (green/yellow/red)
-	•	PRNU correlation graph (histogram)
-	•	Nearby reality-ping timeline (if any)
-	•	Raw receipt JSON for advanced users
+Verifier (client or server-side):
+	1.	Locate receipt: by scanning Supabase `device_receipt_signatures` with `asset_id`, `digest`, or `device_id + signed_at`.
+	2.	Fetch the stored signature payload and associated public key (via `devices` table).
+	3.	Recompute SHA-256 over the candidate media (if available) or trust the stored digest.
+	4.	Run `Ed25519.verify(signature, digest, pubkey)` for cryptographic integrity.
+	5.	Display metadata (timestamp, camera facing, zoom, optional sensors) and highlight whether a matching reality ping exists.
+	6.	Mark verdicts:
+		•	VERIFIED: signature valid + Supabase row present.
+		•	STALE: signature valid but device registry missing (device removed).
+		•	UNVERIFIABLE: no matching Supabase row.
 
 ⸻
 
-Supabase schema (suggested)
+Supabase schema (suggested minimum)
 
 Table: devices
 	•	device_id (pk)
 	•	pubkey (text)
-	•	owner_user_id (fk auth.users)
+	•	owner_user_id (fk auth.users or null)
 	•	device_model (text)
-	•	fingerprint_descriptor (text)
-	•	calibrated_at (timestamp)
 	•	metadata (jsonb)
-
-Table: receipts
-	•	media_hash (pk sha256)
-	•	device_id
-	•	ts
-	•	sig (text/base64)
-	•	digest_path (storage path)
-	•	media_path (storage path)
-	•	verdict (enum nullable)
-	•	created_at
-
-Table: pings
-	•	ping_id (uuid pk)
-	•	device_id
-	•	ts
-	•	payload (jsonb)
-	•	sig
-	•	created_at
+	•	registered_at (timestamptz default now())
 
 Table: device_receipt_signatures
-	•	asset_id (text pk) — system photo library identifier or local UUID
-	•	device_id (text)
+	•	asset_id (text pk) — platform asset identifier or generated UUID
+	•	device_id (text references devices.device_id)
 	•	public_key (text)
-	•	media_type (text enum: photo/video)
-	•	digest (text/sha256)
-	•	signature (text/base64)
+	•	digest (text)
+	•	signature (text)
+	•	media_type (text)         // e.g., 'photo' or 'video'
 	•	byte_length (bigint)
 	•	signed_at (timestamptz)
 	•	camera_facing (text)
 	•	zoom (numeric)
-	•	width (int nullable)
-	•	height (int nullable)
+	•	width (integer nullable)
+	•	height (integer nullable)
 	•	duration (numeric nullable)
 	•	filename (text nullable)
 	•	asset_uri (text nullable)
-	•	metadata_path (text nullable)
-	•	extra (jsonb) — arbitrary client hints (e.g., local source URI)
+	•	metadata_path (text nullable)   // device-local reference
+	•	extra (jsonb)                   // gps grid, sensor hints
 	•	synced_at (timestamptz default now())
 	•	created_at / updated_at (timestamptz defaults)
 
-Storage: media and sidecars.
+Table: pings (optional)
+	•	ping_id (uuid pk)
+	•	device_id
+	•	ts
+	•	payload (jsonb)
+	•	signature
+	•	created_at
 
 ⸻
 
 API endpoints (minimal)
 
-Authentication via Supabase JWT (user sign-in with email or magic link).
-	•	POST /api/devices/register — register device; body: {device_id, pubkey, device_model}. Returns nonce.
+Authentication via Supabase JWT (magic link or passwordless).
+	•	POST /api/devices/register — register device; body: `{ device_id, pubkey, device_model }`. Returns nonce.
 	•	POST /api/devices/verify — client signs nonce to prove ownership (challenge-response).
-	•	POST /api/calibration/upload — upload calibration descriptor (public summary).
-	•	POST /api/media/upload — uploads media; returns media_hash.
-	•	POST /api/receipts — attach receipt: {media_hash, digest_cbor(base64), sig, device_id}
-	•	GET /api/receipts/:media_hash — fetch receipt + verdict
-	•	POST /api/device-receipt-signatures — upsert signed local receipts (body mirrors `device_receipt_signatures` row)
-	•	POST /api/pings — upload signed ping
-	•	GET /api/pings?device_id=&ts_from=&ts_to= — query pings
+	•	POST /api/device-receipt-signatures — upsert signed receipt payload.
+	•	GET /api/device-receipt-signatures?device_id=&signed_after= — query receipts.
+	•	POST /api/pings — upload signed ping (optional).
+	•	GET /api/pings?device_id=&ts_from=&ts_to= — fetch pings around a capture.
 
-Optional verifier:
-	•	POST /api/verify — provide media bytes; server recomputes residual and returns verdict (useful for web demo)
+Optional verifier API:
+	•	POST /api/verify — submit `{ asset_id | digest }` and obtain Supabase-backed verdict.
 
 ⸻
 
@@ -241,104 +175,108 @@ Agent Tasks (for coding agent / hackathon squads)
 
 Priority order (fastest to most impactful):
 	1.	Infra & Auth (Agent A)
-	•	Provision Supabase project (Auth, Postgres, Storage). Create DB schema.
-	•	Implement device registration endpoints (challenge-response).
-	•	Provide example curl/JWT flows.
+		•	Provision Supabase project (Auth, Postgres).
+		•	Create `devices`, `device_receipt_signatures`, optional `pings` tables + policies.
+		•	Provide example curl/JWT flows.
 	2.	Mobile app skeleton (Agent B)
-	•	Expo app with auth, camera capture (expo-camera), file picker, and SecureStore.
-	•	Implement keypair generation + secure save, device register flow.
-	•	UI screens: Onboarding+Cali­bration, Capture, Verify, Settings.
-	3.	PRNU & residual module (Agent C)
-	•	Implement residual extraction pipeline in JS (pure JS / WASM) or call a lightweight server endpoint.
-	•	Calibration flow to compute K (store locally).
-	•	Compute corr, H, DCT_sketch functions.
-	•	Unit tests with synthetic images (add noise, compress, crop).
-	4.	Receipt & sidecar module (Agent B/C)
-	•	Build digest payload, CBOR encode (use cbor lib), sign with Ed25519 (tweetnacl), store sidecar JSON + upload.
-	5.	Reality ping & witness mesh (Agent D)
-	•	Implement ping generation (coarse GPS grid), periodic sender, and server storage.
-	•	Optional: local peer exchange (Bluetooth / mDNS) for co-witness attestations.
-	6.	Verifier service + UI (Agent E)
-	•	Serverless function to verify receipts (signature + recompute residuals) and return verdict.
-	•	UI for viewing verdict and pings timeline.
-	7.	Polish & Demo (All)
-	•	Tamper experiments lines: show benign transforms vs adversarial attempts.
-	•	Prepare slides + live demo script.
+		•	Expo app with auth placeholder, camera capture, SecureStore key management.
+		•	Implement onboarding flow (identity + registry).
+		•	Settings screen: device details, reset, “Sync receipts” control.
+	3.	Capture & signing (Agent C)
+		•	Implement camera UI (front/back toggle, zoom).
+		•	Compute SHA-256 digest, sign with Ed25519, write JSON sidecar.
+		•	Save asset to media library for demo.
+	4.	Supabase sync layer (Agent B/C)
+		•	Read local sidecars, upsert into `device_receipt_signatures`.
+		•	Track `syncedAt` / Supabase row id in sidecar.
+	5.	Verifier experience (Agent D)
+		•	Implement screen to search Supabase by asset id/ digest and display verdict.
+		•	Optional: detect nearby pings and show a timeline.
+	6.	Reality pings & notifications (Agent E, optional)
+		•	Background task to emit signed pings.
+		•	Server policies & minimal visualization.
+	7.	Polish & demo (All)
+		•	Add share sheet for JSON receipt.
+		•	Generate tamper scenarios (altered media without Supabase entry → UNVERIFIABLE).
+		•	Prepare slides + live demo script.
 
 ⸻
 
 Acceptance criteria & tests
-	•	Device register: Agent can register a device and prove control via signed nonce.
-	•	Calibration: App computes PRNU descriptor from 30 flat + 30 dark frames and stores local K.
-	•	Signed capture: Capture a photo → app produces a receipt, signs digest, uploads both to Supabase; receipts table shows entry.
-	•	Verify (happy path): Recompute residual on-device or server → signature verifies and PRNU correlation within threshold → UI shows VERIFIED.
-	•	Verify (tamper path): After editing (crop + denoise), signature still valid but PRNU correlation drops → UI shows SUSPECT.
-	•	Verify (forged path): Try to take unrelated image and attach a different device’s receipt → signature invalid or PRNU mismatch → UI shows FORGED.
-	•	Ping presence: When a ping exists within ±5s of a capture ts and grid matches, the UI shows a “presence” confirmation.
+	•	Device registration: agent registers device and proves control via signed nonce.
+	•	Capture & sign: capturing a photo/video produces a local sidecar with digest + signature.
+	•	Supabase sync: tapping “Sync receipts” uploads new sidecars to `device_receipt_signatures` and marks them synced.
+	•	Verify (happy path): fetching the Supabase row and verifying signature succeeds for original media.
+	•	Verify (missing path): deleting Supabase row → app reports UNVERIFIABLE.
+	•	Pings (optional): when a ping exists within ±5s of capture, UI shows presence confirmation.
 
 ⸻
 
 Threat model & limitations (be explicit for judges)
 	•	Threats addressed:
-	•	Casual forgeries and innocent re-encodings (most benign edits).
-	•	Non-adversarial metadata stripping.
+		•	Forged receipts without access to the device key (signature fails).
+		•	Metadata tampering — Supabase row is authoritative and signed.
 	•	Not addressed / known weaknesses:
-	•	An adversary who compromises private key can sign arbitrary fakes — mitigation: use secure hardware-backed keystore (Secure Enclave) in production.
-	•	A strong adversary with many images of the device can attempt fingerprint extraction and re-embedding (PRNU transplant). Mitigations: fragile fingerprint design, watermarking, multimodal checks (IMU/audio/pings).
-	•	Heavy denoising / generative post-processing can reduce residuals — mitigations: watermark + DCT midband sketch + cross-modal checks.
-	•	Social platforms recompress and strip metadata — store receipts and sidecars on your registry (server) and link by sha256(media) so you can still verify when the original file is available.
+		•	No physical sensor fingerprinting (PRNU). An adversary with device key can sign arbitrary fakes; rely on secure hardware/TEE in production.
+		•	No robust detection of benign edits (crop/filter). Verification is binary on digest.
+		•	Local sidecars store optional context (GPS) that may leak privacy if synced blindly — keep coarse grids or hashes.
 
 ⸻
 
-Implementation shortcuts for 24h hackathon (practical choices)
-	•	Use Expo with expo-camera (no native modules) and expo-secure-store for keys.
-	•	Implement residual extraction in JS using ndarray + simple convolution (don’t try BM3D or heavy denoisers).
-	•	Use tweetnacl or libsodium.js for Ed25519.
-	•	Use Supabase free tier for registry and storage.
-	•	Skip server-side heavy recomputation — do on-device for demo; add server verifier later if time.
-	•	For watermarking, use a simple DCT mid-band additive watermark (low amplitude) using js-dct libs.
-	•	Default thresholds can be tuned live by capturing baseline images and running tests.
+Implementation shortcuts for 24h hackathon
+	•	Use Expo with `expo-camera`, `expo-media-library`, `expo-secure-store`.
+	•	Keep receipts as plain JSON (no CBOR). Supabase stores the same shape in jsonb/columns.
+	•	Run manual sync from Settings; background tasks optional.
+	•	Skip server-side reprocessing — rely on Supabase row + Ed25519.verify in client.
+	•	Use Supabase free tier for registry and receipts.
 
 ⸻
 
-Example pseudocode (capture -> receipt)
+Example pseudocode (capture → receipt → sync)
 
-// 1. Capture image bytes -> I
-const imgBytes = await camera.takePictureAsync({ quality: 0.9 });
+```ts
+// 1. Capture image bytes -> uri
+const photo = await camera.takePictureAsync({ quality: 1, skipProcessing: true });
 
-// 2. Compute residual R
-const I = decodeImage(imgBytes); // float32 array, grayscale
-const I_lp = gaussianBlur(I, 5);
-const R = subtract(I, I_lp);
+// 2. Compute digest and sign
+const base64 = await FileSystem.readAsStringAsync(photo.uri, { encoding: FileSystem.EncodingType.Base64 });
+const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, base64);
+const identity = await ensureIdentity();
+const signature = signDigest(digest, identity.privateKey);
 
-// 3. Compute prnu_corr
-const K = loadLocalPRNU(); // float32 same size or multi-scale
-const corr = normalizedCrossCorrelation(R, K);
+// 3. Write sidecar locally
+const receipt = {
+  assetId: savedAssetId,
+  digest,
+  signature,
+  deviceId: identity.deviceId,
+  publicKey: identity.publicKey,
+  signedAt: new Date().toISOString(),
+  mediaType: "photo",
+  byteLength: base64.length * 0.75,
+  cameraFacing: facing,
+  zoom,
+};
+await writeReceiptToFile(receipt);
 
-// 4. Compute entropy and DCT sketch
-const H = shannonEntropy(R);
-const dctVec = topNDCTbins(R, N=64); // quantize to ints
-
-// 5. Build digest and sign
-const payload = { version: "EntropyCam-0.1", ts: nowISO(), img_hash: sha256(imgBytes), prnu_corr: corr, r_entropy: H, dct_sketch: dctVec };
-const digest = CBOR.encode(payload);
-const sig = ed25519_sign(digest, privateKey);
-
-// 6. Save sidecar and upload
-const mediaHash = sha256(imgBytes);
-uploadToStorage(`/media/${mediaHash}.jpg`, imgBytes);
-uploadToStorage(`/sidecars/${mediaHash}.json`, JSON.stringify({ payload, sig, pubkey }));
-await fetch("/api/receipts", { method:"POST", body: JSON.stringify({ media_hash: mediaHash, digest: base64(digest), sig, device_id }) });
-
+// 4. Sync to Supabase (manual trigger)
+await supabase.from("device_receipt_signatures").upsert({
+  asset_id: receipt.assetId,
+  device_id: receipt.deviceId,
+  digest: receipt.digest,
+  signature: receipt.signature,
+  public_key: receipt.publicKey,
+  media_type: receipt.mediaType,
+  signed_at: receipt.signedAt,
+});
+```
 
 ⸻
 
 UI demo script (judge-friendly)
-	1.	Onboard & calibrate — show “PRNU fingerprint recorded”.
-	2.	Take a live photo — app shows green “VERIFIED” badge after signing and uploading.
-	3.	Tamper the saved photo externally (crop + denoise) and re-run verification → shows SUSPECT (explain thresholds).
-	4.	Take another photo from a different device and try to load the first device’s receipt → shows FORGED.
-	5.	Show ping timeline and demonstrate verifying capture has matching pings ±5s (presence evidence).
-	6.	Show raw receipt JSON and how Ed25519.verify is performed.
-
-⸻
+	1.	Onboard & register — show key generation, Supabase registry entry, and explain device-level signing.
+	2.	Capture photo/video — highlight instant “Signed & saved” status and show JSON sidecar snippet.
+	3.	Sync receipts — tap “Sync receipts to Supabase” and display the new row in Supabase dashboard.
+	4.	Verify lookup — query Supabase by asset id/digest, run Ed25519 verify, show verdict in app.
+	5.	Tamper scenario — edit a photo outside the app; note missing Supabase row → UNVERIFIABLE result.
+	6.	Show optional reality ping timeline if implemented.
