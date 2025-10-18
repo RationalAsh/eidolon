@@ -37,6 +37,12 @@ export const registerDevice = async (identity: DeviceIdentity): Promise<void> =>
   });
 
   if (error) {
+    if (error.code === "42501") {
+      throw new Error(
+        'Supabase row-level security blocked this insert. Grant anon/authenticated write access with a policy like: `create policy "Allow device upserts" on devices for insert with check (true);`'
+      );
+    }
+
     throw error;
   }
 

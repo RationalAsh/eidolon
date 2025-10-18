@@ -3,10 +3,16 @@ import * as SecureStore from "expo-secure-store";
 import nacl from "tweetnacl";
 import { encodeBase64 } from "tweetnacl-util";
 
-const PRIVATE_KEY_STORAGE_KEY = "eidolon:privateKey";
-const PUBLIC_KEY_STORAGE_KEY = "eidolon:publicKey";
-const DEVICE_ID_STORAGE_KEY = "eidolon:deviceId";
-const REGISTRATION_FLAG_STORAGE_KEY = "eidolon:registered";
+const PRIVATE_KEY_STORAGE_KEY = "eidolon_privateKey";
+const PUBLIC_KEY_STORAGE_KEY = "eidolon_publicKey";
+const DEVICE_ID_STORAGE_KEY = "eidolon_deviceId";
+const REGISTRATION_FLAG_STORAGE_KEY = "eidolon_registered";
+const LEGACY_KEYS = [
+  "eidolon:privateKey",
+  "eidolon:publicKey",
+  "eidolon:deviceId",
+  "eidolon:registered",
+];
 
 export type DeviceIdentity = {
   deviceId: string;
@@ -69,6 +75,15 @@ export const clearIdentity = async () => {
     SecureStore.deleteItemAsync(PRIVATE_KEY_STORAGE_KEY),
     SecureStore.deleteItemAsync(REGISTRATION_FLAG_STORAGE_KEY),
   ]);
+  await Promise.all(
+    LEGACY_KEYS.map(async (key) => {
+      try {
+        await SecureStore.deleteItemAsync(key);
+      } catch (error) {
+        console.warn(`Skipping legacy SecureStore key cleanup for ${key}`, error);
+      }
+    })
+  );
 };
 
 export const markRegistered = async () => {
@@ -86,4 +101,3 @@ export const getPublicKeyFingerprint = async (publicKey: string) => {
     publicKey
   );
 };
-

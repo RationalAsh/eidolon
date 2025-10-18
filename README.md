@@ -9,6 +9,27 @@ Hackathon-oriented Expo app that anchors captured media to device-specific entro
 - `npm run start` to launch Expo CLI, then open on iOS, Android, or web.
 - Project uses TypeScript and React Navigation (stack + tabs).
 
+### Supabase Setup
+
+With row-level security enabled, allow the anon key to insert into the `devices` table for the hackathon demo:
+
+```sql
+-- Supabase SQL editor
+alter table devices enable row level security;
+
+create policy "Allow anon device upserts"
+  on devices
+  for insert
+  with check (true);
+
+create policy "Allow anon device select"
+  on devices
+  for select
+  using (true);
+```
+
+Adjust the policies as you progress toward authenticated flows.
+
 ## Screen Outline
 
 - **Onboarding** — generates/stores device keys, checks Supabase config, and triggers device registration.

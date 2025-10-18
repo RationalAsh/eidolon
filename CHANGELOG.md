@@ -10,3 +10,5 @@
 - Wired Onboarding screen to generate SecureStore-backed Ed25519 keys, surface Supabase configuration, and call the `devices` registry via `@supabase/supabase-js`.
 - Added crypto & device helper services, Supabase client wrapper, and supporting Expo modules (SecureStore, Crypto, Device) plus custom type declarations.
 - Updated documentation (`README.md`, `.env.example`) and TypeScript config to cover environment setup and third-party typings.
+- Replaced legacy SecureStore key names with underscore-based variants to satisfy platform constraints during onboarding.
+- Added Supabase RLS guidance and surfaced policy error messaging when device upsert is blocked.
