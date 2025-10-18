@@ -1,4 +1,4 @@
-EntropyCam / Reality-Pings Demo (Hackathon MVP)
+Eidolon Demo (Hackathon MVP)
 
 Project summary (one-liner)
 
