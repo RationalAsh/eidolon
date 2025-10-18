@@ -2,7 +2,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import Slider from "@react-native-community/slider";
 import { CameraType, CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import * as Crypto from "expo-crypto";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
 import { toByteArray, fromByteArray } from "base64-js";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,25 +11,22 @@ import {
   Alert,
   Platform,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import nacl from "tweetnacl";
 import { ensureIdentity } from "../services/deviceIdentity";
 import type { CaptureMode, CaptureReceipt } from "../types/capture";
 
 const resolveCaptureDirectory = () => {
-  try {
-    return FileSystem.Paths.document.uri;
-  } catch (error) {
-    try {
-      return FileSystem.Paths.cache.uri;
-    } catch {
-      return "";
-    }
-  }
+  const base =
+    FileSystem.documentDirectory ??
+    FileSystem.cacheDirectory ??
+    FileSystem.bundleDirectory ??
+    "";
+  return base.endsWith("/") ? base : `${base}/`;
 };
 
 const CAPTURE_METADATA_DIR = `${resolveCaptureDirectory()}captures`;
@@ -180,7 +177,7 @@ const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
       try {
         await ensureDirectory(CAPTURE_METADATA_DIR);
         const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: "base64",
+          encoding: FileSystem.EncodingType.Base64,
         });
         const bytes = toByteArray(base64);
 
