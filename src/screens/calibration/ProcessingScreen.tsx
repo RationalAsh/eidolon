@@ -30,6 +30,22 @@ const PROCESS_STEPS = [
   "Quantising fingerprint descriptor…",
 ];
 
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const lerp = (start: number, end: number, t: number) =>
+  start + (end - start) * t;
+
+const HEATMAP_COOL = { r: 60, g: 90, b: 150 };
+const HEATMAP_WARM = { r: 255, g: 120, b: 60 };
+
+const heatmapColorForValue = (value: number) => {
+  const t = clamp01(value);
+  const r = Math.round(lerp(HEATMAP_COOL.r, HEATMAP_WARM.r, t));
+  const g = Math.round(lerp(HEATMAP_COOL.g, HEATMAP_WARM.g, t));
+  const b = Math.round(lerp(HEATMAP_COOL.b, HEATMAP_WARM.b, t));
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
 const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
   const { flatFrames, darkFrames, setFingerprint } = useCalibrationSession();
   const flatCount = flatFrames.length;
@@ -240,17 +256,21 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         />
         <View style={styles.heatmap}>
           {heatmapValues.map((value, index) => {
-            const cool = `rgba(60, 90, 150, ${0.25 + value * 0.25})`;
-            const warm = `rgba(255, 120, 60, ${0.35 + value * 0.45})`;
-            const backgroundColor = heatmapAnim.interpolate({
+            const baseOpacity = 0.4 + clamp01(value) * 0.6;
+            const cellOpacity = heatmapAnim.interpolate({
               inputRange: [0, 1],
-              outputRange: [cool, warm],
+              outputRange: [baseOpacity * 0.8, Math.min(1, baseOpacity * 1.05)],
             });
-
             return (
               <Animated.View
                 key={`cell-${index}`}
-                style={[styles.heatCell, { backgroundColor }]}
+                style={[
+                  styles.heatCell,
+                  {
+                    backgroundColor: heatmapColorForValue(value),
+                    opacity: cellOpacity,
+                  },
+                ]}
               />
             );
           })}
