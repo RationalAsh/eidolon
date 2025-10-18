@@ -243,7 +243,7 @@ const VerifyScreen: React.FC = () => {
     }
 
     try {
-      await delay(200);
+      await delay(300);
       const updatedPermissions = (await MediaLibrary.getPermissionsAsync()) as PermissionDetails;
       if (!hasLibraryAccess(updatedPermissions)) {
         setLibraryError(
@@ -251,11 +251,11 @@ const VerifyScreen: React.FC = () => {
         );
         return;
       }
-      await fetchAssetSummaries();
+      await loadLatestAssets();
     } catch (error) {
       console.warn("Manage access refresh failed", error);
     }
-  }, [fetchAssetSummaries]);
+  }, [loadLatestAssets]);
 
   useEffect(() => {
     loadLatestAssets().catch((error) => {
