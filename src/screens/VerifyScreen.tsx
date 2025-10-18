@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   ActivityIndicator,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -10,6 +11,7 @@ import {
 } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   computeDigestForFile,
   fetchDeviceRecord,
@@ -26,6 +28,7 @@ type AssetSummary = {
   mediaType: "photo" | "video";
   duration?: number | null;
   createdAt?: string | null;
+  thumbnailUri: string | null;
 };
 
 type SelectedAssetDetails = {
@@ -96,7 +99,10 @@ const formatCreationTime = (value: string | null | undefined) => {
   return dt.toLocaleString();
 };
 
-const toAssetSummary = (asset: MediaLibrary.Asset): AssetSummary => {
+const toAssetSummary = (
+  asset: MediaLibrary.Asset,
+  previewUri: string | null
+): AssetSummary => {
   const mediaType =
     asset.mediaType === MediaLibrary.MediaType.video ? "video" : "photo";
   return {
@@ -105,10 +111,12 @@ const toAssetSummary = (asset: MediaLibrary.Asset): AssetSummary => {
     mediaType,
     duration: asset.duration ?? null,
     createdAt: asset.creationTime ? new Date(asset.creationTime * 1000).toISOString() : null,
+    thumbnailUri: previewUri,
   };
 };
 
 const VerifyScreen: React.FC = () => {
+  const insets = useSafeAreaInsets();
   const [assetSummaries, setAssetSummaries] = useState<AssetSummary[]>([]);
   const [assetsLoading, setAssetsLoading] = useState<boolean>(false);
   const [selectedAsset, setSelectedAsset] = useState<SelectedAssetDetails | null>(null);
@@ -142,17 +150,28 @@ const VerifyScreen: React.FC = () => {
     setLibraryError(null);
     try {
       const page = await MediaLibrary.getAssetsAsync({
-        first: 40,
+        first: 60,
         sortBy: [MediaLibrary.SortBy.creationTime],
         mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
       });
       const sortedAssets = [...page.assets].sort(
         (a, b) => (b.creationTime ?? 0) - (a.creationTime ?? 0)
       );
-      setAssetSummaries(sortedAssets.map((asset) => toAssetSummary(asset)));
-      if (page.assets.length === 0) {
-        setLibraryError("No media found in the device library yet.");
-      }
+      const summaries = await Promise.all(
+        sortedAssets.map(async (asset) => {
+          let previewUri: string | null = asset.uri ?? null;
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+              shouldDownloadFromNetwork: false,
+            });
+            previewUri = info.localUri ?? info.uri ?? asset.uri ?? null;
+          } catch (error) {
+            console.warn("Preview fetch failed", asset.id, error);
+          }
+          return toAssetSummary(asset, previewUri);
+        })
+      );
+      setAssetSummaries(summaries);
     } catch (error) {
       const message =
         error instanceof Error
@@ -181,6 +200,36 @@ const VerifyScreen: React.FC = () => {
         : null,
     };
   }, []);
+
+  const handleManageLibrary = useCallback(async () => {
+    try {
+      setLibraryError(null);
+      if (
+        typeof (MediaLibrary as {
+          presentPermissionsPickerAsync?: () => Promise<void>;
+        }).presentPermissionsPickerAsync === "function"
+      ) {
+        await (MediaLibrary as {
+          presentPermissionsPickerAsync?: () => Promise<void>;
+        }).presentPermissionsPickerAsync!();
+      } else {
+        await MediaLibrary.requestPermissionsAsync();
+      }
+      await loadLatestAssets();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to update media library permissions.";
+      setLibraryError(message);
+    }
+  }, [loadLatestAssets]);
+
+  useEffect(() => {
+    loadLatestAssets().catch((error) => {
+      console.warn("Initial media load failed", error);
+    });
+  }, [loadLatestAssets]);
 
   const handleVerifyAsset = useCallback(
     async (summary: AssetSummary) => {
@@ -251,56 +300,81 @@ const VerifyScreen: React.FC = () => {
   );
 
   const verificationInstructions = useMemo(() => {
-    if (assetSummaries.length === 0) {
-      return "Tap “Load media library” to browse recent captures stored on this device.";
+    if (assetsLoading) {
+      return "Loading your media library…";
     }
-    return "Pick a media file below. The app will hash the file and compare it against Supabase.";
-  }, [assetSummaries.length]);
+    if (assetSummaries.length === 0) {
+      return "No media available yet. Capture a photo/video or use Manage access to share more items.";
+    }
+    return "Tap a thumbnail to verify its receipt. Use Refresh after capturing new media.";
+  }, [assetsLoading, assetSummaries.length]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: Math.max(insets.top, 16) + 16 },
+      ]}
+    >
       <Text style={styles.title}>Verify a capture</Text>
       <Text style={styles.subtitle}>
         Choose a local photo or video. Eidolon will hash the file, look up the digest in Supabase,
         and re-run the Ed25519 signature check to confirm authenticity.
       </Text>
 
-      <Pressable
-        style={[styles.primaryButton, assetsLoading && styles.buttonDisabled]}
-        onPress={loadLatestAssets}
-        disabled={assetsLoading}
-      >
-        {assetsLoading ? (
-          <ActivityIndicator size="small" color="#121726" />
-        ) : (
-          <Text style={styles.primaryButtonLabel}>Load media library</Text>
-        )}
-      </Pressable>
+      <View style={styles.buttonRow}>
+        <Pressable
+          style={[styles.primaryButton, assetsLoading && styles.buttonDisabled]}
+          onPress={loadLatestAssets}
+          disabled={assetsLoading}
+        >
+          {assetsLoading ? (
+            <ActivityIndicator size="small" color="#121726" />
+          ) : (
+            <Text style={styles.primaryButtonLabel}>Refresh library</Text>
+          )}
+        </Pressable>
+        <Pressable style={styles.manageButton} onPress={handleManageLibrary}>
+          <Text style={styles.manageButtonLabel}>Manage access</Text>
+        </Pressable>
+      </View>
 
       <Text style={styles.instructions}>{verificationInstructions}</Text>
       {libraryError && <Text style={styles.errorText}>{libraryError}</Text>}
+      {!assetsLoading && assetSummaries.length === 0 && !libraryError && (
+        <Text style={styles.emptyLibraryText}>
+          Media library appears empty. Capture something new or adjust access permissions.
+        </Text>
+      )}
 
-      {assetSummaries.map((asset) => (
-        <Pressable
-          key={asset.id}
-          style={[
-            styles.assetRow,
-            selectedAsset?.summary.id === asset.id && styles.assetRowActive,
-          ]}
-          onPress={() => handleVerifyAsset(asset)}
-        >
-          <View style={styles.assetMeta}>
-            <Text style={styles.assetName}>{asset.filename}</Text>
-            <Text style={styles.assetHint}>
-              {asset.mediaType === "photo" ? "Photo" : "Video"}
-              {asset.duration ? ` • ${asset.duration.toFixed(1)}s` : ""}
-            </Text>
-          </View>
-          <Text style={styles.assetTimestamp}>
-            {formatCreationTime(asset.createdAt)}
-          </Text>
-        </Pressable>
-      ))}
+      <View style={styles.assetGrid}>
+        {assetSummaries.map((asset) => (
+          <Pressable
+            key={asset.id}
+            style={[
+              styles.assetTile,
+              selectedAsset?.summary.id === asset.id && styles.assetTileSelected,
+            ]}
+            onPress={() => handleVerifyAsset(asset)}
+          >
+            {asset.thumbnailUri ? (
+              <Image source={{ uri: asset.thumbnailUri }} style={styles.assetImage} />
+            ) : (
+              <View style={styles.assetPlaceholder}>
+                <Text style={styles.assetPlaceholderText}>No preview</Text>
+              </View>
+            )}
+            <View style={styles.assetOverlay}>
+              <Text style={styles.assetOverlayText}>
+                {asset.mediaType === "photo" ? "Photo" : "Video"}
+                {asset.duration ? ` • ${asset.duration.toFixed(1)}s` : ""}
+              </Text>
+              <Text style={styles.assetOverlaySub}>{formatCreationTime(asset.createdAt)}</Text>
+            </View>
+          </Pressable>
+        ))}
+      </View>
 
       <View style={styles.verificationPanel}>
         <Text style={styles.panelTitle}>Verification status</Text>
@@ -404,7 +478,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#090f1a",
   },
   content: {
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
     gap: 16,
   },
   title: {
@@ -417,7 +492,12 @@ const styles = StyleSheet.create({
     color: "#adb6cc",
     lineHeight: 20,
   },
+  buttonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   primaryButton: {
+    flex: 1,
     borderRadius: 12,
     backgroundColor: "#4b89ff",
     paddingVertical: 14,
@@ -427,6 +507,20 @@ const styles = StyleSheet.create({
     color: "#f7f9ff",
     fontWeight: "700",
     fontSize: 15,
+  },
+  manageButton: {
+    marginLeft: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2c3b58",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#0f1728",
+  },
+  manageButtonLabel: {
+    color: "#d4dcf2",
+    fontWeight: "600",
+    fontSize: 14,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -439,38 +533,65 @@ const styles = StyleSheet.create({
     color: "#f48b8f",
     fontSize: 13,
   },
-  assetRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: "#101829",
-    borderWidth: 1,
-    borderColor: "#1f2a3f",
-    marginTop: 8,
-  },
-  assetRowActive: {
-    borderColor: "#4b89ff",
-    backgroundColor: "#15223a",
-  },
-  assetMeta: {
-    flex: 1,
-    marginRight: 12,
-  },
-  assetName: {
-    color: "#f0f5ff",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  assetHint: {
+  emptyLibraryText: {
     color: "#8b97b3",
     fontSize: 12,
+    marginTop: 4,
   },
-  assetTimestamp: {
+  assetGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginHorizontal: -6,
+    marginTop: 12,
+  },
+  assetTile: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 14,
+    backgroundColor: "#101829",
+    borderWidth: 2,
+    borderColor: "transparent",
+    marginHorizontal: 6,
+    marginBottom: 12,
+    flexBasis: "30%",
+    maxWidth: "30%",
+    aspectRatio: 1,
+  },
+  assetTileSelected: {
+    borderColor: "#4b89ff",
+  },
+  assetImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  assetPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#131f38",
+  },
+  assetPlaceholderText: {
     color: "#6f7a95",
     fontSize: 12,
+  },
+  assetOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(9, 15, 26, 0.7)",
+  },
+  assetOverlayText: {
+    color: "#f0f5ff",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  assetOverlaySub: {
+    color: "#b4bed6",
+    fontSize: 10,
   },
   verificationPanel: {
     borderRadius: 14,
@@ -478,7 +599,7 @@ const styles = StyleSheet.create({
     borderColor: "#1f2a3f",
     backgroundColor: "#0f182a",
     padding: 18,
-    marginTop: 12,
+    marginTop: 16,
     gap: 12,
   },
   panelTitle: {
@@ -505,11 +626,11 @@ const styles = StyleSheet.create({
   loadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
   },
   loadingText: {
     color: "#c1cbe4",
     fontSize: 13,
+    marginLeft: 8,
   },
   panelError: {
     color: "#f48b8f",

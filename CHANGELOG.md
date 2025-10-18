@@ -9,6 +9,7 @@
 - Normalized capture metadata filenames so iOS asset identifiers with path separators save signatures reliably.
 - Added Supabase sync for local signature receipts (new `device_receipt_signatures` table + Settings button to upload sidecars).
 - Retired the PRNU/calibration pipeline and removed related code to focus on Supabase-backed signature lookup.
+- Rebuilt the Verify tab with an auto-loaded media grid, safe-area padding tweaks, and a “Manage access” flow so judges can pick a thumbnail, hash it, and confirm Supabase signatures without typing IDs.
 
 ## 2024-10-18
 - Initialized Expo TypeScript project scaffold and installed React Navigation dependencies.

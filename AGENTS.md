@@ -191,6 +191,7 @@ Priority order (fastest to most impactful):
 		•	Track `syncedAt` / Supabase row id in sidecar.
 	5.	Verifier experience (Agent D)
 		•	Implement screen for selecting a local photo/video, hashing it, querying Supabase by digest, and surface the signature verdict.
+		•	Auto-load a thumbnail grid of recent captures with a “Manage access” control for requesting additional library items.
 		•	Optional: detect nearby pings and show a timeline.
 	6.	Reality pings & notifications (Agent E, optional)
 		•	Background task to emit signed pings.
@@ -277,6 +278,6 @@ UI demo script (judge-friendly)
 	1.	Onboard & register — show key generation, Supabase registry entry, and explain device-level signing.
 	2.	Capture photo/video — highlight instant “Signed & saved” status and show JSON sidecar snippet.
 	3.	Sync receipts — tap “Sync receipts to Supabase” and display the new row in Supabase dashboard.
-	4.	Verify lookup — pick the captured media from the device library; the app hashes it, queries Supabase, and runs Ed25519 verify to show the verdict.
+	4.	Verify lookup — browse the thumbnail grid, pick the captured media, then watch the app hash it, query Supabase, and run Ed25519 verify to show the verdict.
 	5.	Tamper scenario — edit a photo outside the app; note missing Supabase row → UNVERIFIABLE result.
 	6.	Show optional reality ping timeline if implemented.
