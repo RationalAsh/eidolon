@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -17,10 +17,13 @@ import {
   fetchDeviceRecord,
   fetchSupabaseReceipts,
   formatVerdictMessage,
+  locateBestLocalReceipt,
+  loadLocalReceipts,
   SupabaseDeviceRow,
   SupabaseReceiptRow,
   verifySignatureWithFile,
 } from "../services/verification";
+import type { CaptureReceipt } from "../types/capture";
 
 type AssetSummary = {
   id: string;
@@ -125,6 +128,36 @@ const hasLibraryAccess = (perm: PermissionDetails) =>
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const buildAssetIdCandidates = (assetId: string): string[] => {
+  const candidates = new Set<string>();
+  if (assetId) {
+    candidates.add(assetId);
+    const withoutScheme = assetId.replace(/^ph:\/\//i, "");
+    candidates.add(withoutScheme);
+    if (assetId.includes("/")) {
+      const firstSegment = assetId.split("/")[0];
+      if (firstSegment) {
+        candidates.add(firstSegment);
+      }
+    }
+  }
+  return Array.from(candidates).filter(Boolean);
+};
+
+const findLocalReceiptForAsset = (
+  receipts: CaptureReceipt[],
+  assetId: string
+): CaptureReceipt | null => {
+  const candidates = buildAssetIdCandidates(assetId);
+  for (const candidate of candidates) {
+    const match = locateBestLocalReceipt(receipts, { assetId: candidate });
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+};
+
 const VerifyScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const [assetSummaries, setAssetSummaries] = useState<AssetSummary[]>([]);
@@ -132,6 +165,10 @@ const VerifyScreen: React.FC = () => {
   const [selectedAsset, setSelectedAsset] = useState<SelectedAssetDetails | null>(null);
   const [verificationState, setVerificationState] = useState<VerificationState>({ status: "idle" });
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const assetsLoadingRef = useRef(false);
+  const assetIdsRef = useRef<string[]>([]);
+  const [localReceipts, setLocalReceipts] = useState<CaptureReceipt[]>([]);
+  const localReceiptsRef = useRef<CaptureReceipt[]>([]);
 
   const ensureMediaPermissions = useCallback(async () => {
     const existing = (await MediaLibrary.getPermissionsAsync()) as PermissionDetails;
@@ -155,7 +192,7 @@ const VerifyScreen: React.FC = () => {
     setLibraryError(null);
     try {
       const page = await MediaLibrary.getAssetsAsync({
-        first: 60,
+        first: 200,
         sortBy: [MediaLibrary.SortBy.creationTime],
         mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
       });
@@ -177,6 +214,7 @@ const VerifyScreen: React.FC = () => {
         })
       );
       setAssetSummaries(summaries);
+      assetIdsRef.current = summaries.map((item) => item.id);
       if (summaries.length === 0) {
         setLibraryError("No media found in the device library yet.");
       }
@@ -191,13 +229,34 @@ const VerifyScreen: React.FC = () => {
     }
   }, []);
 
+  const refreshLocalReceipts = useCallback(async (): Promise<CaptureReceipt[]> => {
+    try {
+      const receipts = await loadLocalReceipts();
+      setLocalReceipts(receipts);
+      localReceiptsRef.current = receipts;
+      return receipts;
+    } catch (error) {
+      console.warn("Failed to load local receipts", error);
+      return localReceiptsRef.current;
+    }
+  }, []);
+
   const loadLatestAssets = useCallback(async () => {
+    if (assetsLoadingRef.current) {
+      return;
+    }
+
     const permitted = await ensureMediaPermissions();
     if (!permitted) {
       return;
     }
 
-    await fetchAssetSummaries();
+    assetsLoadingRef.current = true;
+    try {
+      await fetchAssetSummaries();
+    } finally {
+      assetsLoadingRef.current = false;
+    }
   }, [ensureMediaPermissions, fetchAssetSummaries]);
 
   const resolveAssetUri = useCallback(async (summary: AssetSummary): Promise<SelectedAssetDetails> => {
@@ -242,8 +301,12 @@ const VerifyScreen: React.FC = () => {
       return;
     }
 
-    try {
-      await delay(300);
+    const baselineSignature = assetIdsRef.current.join("|");
+    const maxAttempts = 8;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await delay(attempt === 0 ? 300 : 450);
+
       const updatedPermissions = (await MediaLibrary.getPermissionsAsync()) as PermissionDetails;
       if (!hasLibraryAccess(updatedPermissions)) {
         setLibraryError(
@@ -251,17 +314,27 @@ const VerifyScreen: React.FC = () => {
         );
         return;
       }
+
       await loadLatestAssets();
-    } catch (error) {
-      console.warn("Manage access refresh failed", error);
+
+      const currentSignature = assetIdsRef.current.join("|");
+      if (currentSignature !== baselineSignature) {
+        return;
+      }
     }
+
+    await delay(400);
+    await loadLatestAssets();
   }, [loadLatestAssets]);
 
   useEffect(() => {
     loadLatestAssets().catch((error) => {
       console.warn("Initial media load failed", error);
     });
-  }, [loadLatestAssets]);
+    refreshLocalReceipts().catch((error) => {
+      console.warn("Initial receipt load failed", error);
+    });
+  }, [loadLatestAssets, refreshLocalReceipts]);
 
   const handleVerifyAsset = useCallback(
     async (summary: AssetSummary) => {
@@ -269,14 +342,39 @@ const VerifyScreen: React.FC = () => {
       setSelectedAsset(null);
 
       try {
+        const receipts = await refreshLocalReceipts();
         const resolved = await resolveAssetUri(summary);
         setSelectedAsset(resolved);
 
-        setVerificationState({ status: "loading", label: "Computing digest…" });
-        const digest = await computeDigestForFile(resolved.uri);
+        const candidateReceipt = findLocalReceiptForAsset(receipts, summary.id);
 
         setVerificationState({ status: "loading", label: "Querying Supabase…" });
-        const rows = await fetchSupabaseReceipts({ digest: digest.toLowerCase() });
+        const assetIdSource = candidateReceipt?.assetId ?? summary.id;
+        const assetIdCandidates = buildAssetIdCandidates(assetIdSource);
+        let rows: SupabaseReceiptRow[] = [];
+        if (assetIdCandidates.length > 0) {
+          rows = await fetchSupabaseReceipts({ assetIds: assetIdCandidates });
+        }
+
+        setVerificationState({ status: "loading", label: "Computing digest…" });
+        const digest = await computeDigestForFile(resolved.uri);
+        const digestLower = digest.toLowerCase();
+
+        if (rows.length === 0) {
+          const digestCandidates = new Set<string>();
+          if (candidateReceipt) {
+            digestCandidates.add(candidateReceipt.digest.toLowerCase());
+          }
+          digestCandidates.add(digestLower);
+
+          for (const candidate of digestCandidates) {
+            setVerificationState({ status: "loading", label: "Querying Supabase…" });
+            rows = await fetchSupabaseReceipts({ digest: candidate });
+            if (rows.length > 0) {
+              break;
+            }
+          }
+        }
 
         if (rows.length === 0) {
           setVerificationState({ status: "not_found", digest });
@@ -441,7 +539,8 @@ const VerifyScreen: React.FC = () => {
           <View style={styles.panelCard}>
             <Text style={styles.panelVerdict}>UNVERIFIABLE</Text>
             <Text style={styles.panelMessage}>
-              No Supabase receipt matched the digest below.
+              No Supabase receipt matched the digest below. If this capture is recent,
+              run “Sync receipts” from Settings to upload the sidecar.
             </Text>
             <Text style={styles.panelDigestLabel}>Digest</Text>
             <Text style={styles.panelDigest}>{verificationState.digest}</Text>

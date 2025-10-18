@@ -68,6 +68,7 @@ export type VerificationReport = {
 
 export const fetchSupabaseReceipts = async (query: {
   assetId?: string;
+  assetIds?: string[];
   digest?: string;
   limit?: number;
 }): Promise<SupabaseReceiptRow[]> => {
@@ -84,7 +85,9 @@ export const fetchSupabaseReceipts = async (query: {
     .order("signed_at", { ascending: false })
     .limit(query.limit ?? 20);
 
-  if (query.assetId) {
+  if (query.assetIds && query.assetIds.length > 0) {
+    builder = builder.in("asset_id", query.assetIds);
+  } else if (query.assetId) {
     builder = builder.eq("asset_id", query.assetId);
   }
 
