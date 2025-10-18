@@ -12,3 +12,4 @@
 - Updated documentation (`README.md`, `.env.example`) and TypeScript config to cover environment setup and third-party typings.
 - Replaced legacy SecureStore key names with underscore-based variants to satisfy platform constraints during onboarding.
 - Added Supabase RLS guidance and surfaced policy error messaging when device upsert is blocked.
+- Split onboarding into dedicated intro, identity, and registry screens with animated flows and updated navigation.

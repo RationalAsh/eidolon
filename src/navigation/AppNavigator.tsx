@@ -11,12 +11,16 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import CalibrationScreen from "../screens/CalibrationScreen";
 import CaptureScreen from "../screens/CaptureScreen";
-import OnboardingScreen from "../screens/OnboardingScreen";
+import OnboardingIntroScreen from "../screens/onboarding/IntroScreen";
+import OnboardingIdentityScreen from "../screens/onboarding/IdentityScreen";
+import OnboardingRegistryScreen from "../screens/onboarding/RegistryScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import VerifyScreen from "../screens/VerifyScreen";
 
 export type RootStackParamList = {
-  Onboarding: undefined;
+  OnboardingIntro: undefined;
+  OnboardingIdentity: undefined;
+  OnboardingRegistry: undefined;
   Calibration: undefined;
   MainTabs: undefined;
 };
@@ -86,11 +90,24 @@ const getTabIcon = (routeName: keyof MainTabParamList) => {
 const AppNavigator: React.FC = () => {
   return (
     <NavigationContainer theme={darkTheme}>
-      <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Navigator
+        initialRouteName="OnboardingIntro"
+        screenOptions={screenOptions}
+      >
         <Stack.Screen
-          name="Onboarding"
-          component={OnboardingScreen}
-          options={{ title: "Eidolon Onboarding" }}
+          name="OnboardingIntro"
+          component={OnboardingIntroScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="OnboardingIdentity"
+          component={OnboardingIdentityScreen}
+          options={{ title: "Create Device Identity" }}
+        />
+        <Stack.Screen
+          name="OnboardingRegistry"
+          component={OnboardingRegistryScreen}
+          options={{ title: "Register Device" }}
         />
         <Stack.Screen
           name="Calibration"
