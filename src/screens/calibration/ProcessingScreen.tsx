@@ -1,9 +1,8 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Animated,
+  ActivityIndicator,
   Button,
-  Easing,
   Platform,
   StyleSheet,
   Text,
@@ -23,42 +22,32 @@ import { computeFingerprintFromFrames } from "../../utils/prnu";
 
 type Props = NativeStackScreenProps<CalibrationStackParamList, "CalibrationProcess">;
 
-const PROCESS_STEPS = [
-  "Normalising flat-field stack…",
-  "Subtracting dark-current baseline…",
-  "Extracting PRNU residual…",
-  "Quantising fingerprint descriptor…",
-];
-
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
-
-const lerp = (start: number, end: number, t: number) =>
-  start + (end - start) * t;
-
-const HEATMAP_COOL = { r: 60, g: 90, b: 150 };
-const HEATMAP_WARM = { r: 255, g: 120, b: 60 };
-
 const heatmapColorForValue = (value: number) => {
-  const t = clamp01(value);
-  const r = Math.round(lerp(HEATMAP_COOL.r, HEATMAP_WARM.r, t));
-  const g = Math.round(lerp(HEATMAP_COOL.g, HEATMAP_WARM.g, t));
-  const b = Math.round(lerp(HEATMAP_COOL.b, HEATMAP_WARM.b, t));
-  return `rgb(${r}, ${g}, ${b})`;
+  const clamped = Math.max(0, Math.min(1, value));
+  if (clamped < 0.25) {
+    return "#1e40af";
+  }
+  if (clamped < 0.5) {
+    return "#2563eb";
+  }
+  if (clamped < 0.75) {
+    return "#f97316";
+  }
+  return "#ef4444";
 };
 
 const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
   const { flatFrames, darkFrames, setFingerprint } = useCalibrationSession();
   const flatCount = flatFrames.length;
   const darkCount = darkFrames.length;
-  const [stepIndex, setStepIndex] = useState(0);
+  const [processing, setProcessing] = useState(true);
   const [completed, setCompleted] = useState(false);
   const [descriptor, setDescriptor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [correlations, setCorrelations] = useState<number[] | null>(null);
-  const heatmapAnim = useRef(new Animated.Value(0)).current;
-  const waveAnim = useRef(new Animated.Value(0)).current;
+  const [heatmapReady, setHeatmapReady] = useState(false);
   const [heatmapValues, setHeatmapValues] = useState<number[]>(() =>
-    Array.from({ length: CALIBRATION_HEATMAP_GRID * CALIBRATION_HEATMAP_GRID }, () => Math.random())
+    Array.from({ length: CALIBRATION_HEATMAP_GRID * CALIBRATION_HEATMAP_GRID }, () => 0.5)
   );
   const fingerprintSaved = useRef(false);
 
@@ -83,6 +72,12 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
 
     const processFingerprint = async () => {
       try {
+        if (isMounted) {
+          setProcessing(true);
+          setCompleted(false);
+          setHeatmapReady(false);
+        }
+
         if (
           flatCount < CALIBRATION_TARGET_FRAMES ||
           darkCount < CALIBRATION_TARGET_FRAMES
@@ -104,6 +99,7 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         setDescriptor(result.descriptor);
         setHeatmapValues(result.heatmap);
         setCorrelations(result.correlations);
+        setHeatmapReady(true);
         setFingerprint({
           descriptor: result.descriptor,
           vector: Array.from(result.fingerprint),
@@ -130,6 +126,11 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         if (isMounted) {
           setError(parseError(err));
         }
+      } finally {
+        if (isMounted) {
+          setProcessing(false);
+          setCompleted(true);
+        }
       }
     };
 
@@ -140,69 +141,6 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
     };
   }, [darkCount, darkFrames, flatCount, flatFrames, parseError, setFingerprint]);
 
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(heatmapAnim, {
-          toValue: 1,
-          duration: 900,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: false,
-        }),
-        Animated.timing(heatmapAnim, {
-          toValue: 0,
-          duration: 900,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: false,
-        }),
-      ])
-    );
-    loop.start();
-
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(waveAnim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: false,
-        }),
-        Animated.timing(waveAnim, {
-          toValue: 0,
-          duration: 800,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: false,
-        }),
-      ])
-    );
-    pulse.start();
-
-    const stepTimer = setInterval(() => {
-      setStepIndex((prev) => {
-        if (prev >= PROCESS_STEPS.length - 1) {
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 1400);
-
-    const finishTimer = setTimeout(() => {
-      loop.stop();
-      pulse.stop();
-      setCompleted(true);
-      setStepIndex(PROCESS_STEPS.length - 1);
-      heatmapAnim.setValue(1);
-      waveAnim.setValue(1);
-    }, 5200);
-
-    return () => {
-      loop.stop();
-      pulse.stop();
-      clearInterval(stepTimer);
-      clearTimeout(finishTimer);
-    };
-  }, [heatmapAnim, waveAnim]);
-
   const handleContinue = useCallback(() => {
     const parent = navigation.getParent();
     parent?.navigate("MainTabs");
@@ -211,14 +149,14 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryTitle}>Processing sensor fingerprint</Text>
+        <Text style={styles.summaryTitle}>PRNU calibration</Text>
         <Text style={styles.summaryText}>
-          Flat frames: <Text style={styles.emphasis}>{flatCount}</Text>
+          Flat frames collected: <Text style={styles.emphasis}>{flatCount}</Text>
         </Text>
         <Text style={styles.summaryText}>
-          Dark frames: <Text style={styles.emphasis}>{darkCount}</Text>
+          Dark frames collected: <Text style={styles.emphasis}>{darkCount}</Text>
         </Text>
-        {correlations && correlations.length > 0 && (
+        {correlations && correlations.length > 0 && heatmapReady && (
           <Text style={styles.summaryText}>
             Avg PRNU correlation:{" "}
             <Text style={styles.emphasis}>
@@ -234,54 +172,43 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         </Text>
       </View>
 
-      <View style={styles.heatmapContainer}>
-        <Animated.View
-          style={[
-            styles.wave,
-            {
-              opacity: waveAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0.15, 0.45],
-              }),
-              transform: [
-                {
-                  scale: waveAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.9, 1.05],
-                  }),
-                },
-              ],
-            },
-          ]}
-        />
-        <View style={styles.heatmap}>
-          {heatmapValues.map((value, index) => {
-            const baseOpacity = 0.4 + clamp01(value) * 0.6;
-            const cellOpacity = heatmapAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [baseOpacity * 0.8, Math.min(1, baseOpacity * 1.05)],
-            });
-            return (
-              <Animated.View
+      {processing && !error && (
+        <View style={styles.loadingPane}>
+          <ActivityIndicator
+            color="#5da9ff"
+            size="large"
+          />
+          <Text style={styles.loadingText}>Crunching PRNU residuals…</Text>
+          <Text style={styles.loadingSubtext}>
+            We process every frame on-device. Leave the app open until this finishes.
+          </Text>
+        </View>
+      )}
+
+      {!processing && heatmapReady && !error && (
+        <View style={styles.heatmapContainer}>
+          <Text style={styles.heatmapTitle}>Correlation heatmap</Text>
+          <View style={styles.heatmap}>
+            {heatmapValues.map((value, index) => (
+              <View
                 key={`cell-${index}`}
                 style={[
                   styles.heatCell,
                   {
                     backgroundColor: heatmapColorForValue(value),
-                    opacity: cellOpacity,
                   },
                 ]}
               />
-            );
-          })}
+            ))}
+          </View>
+          <View style={styles.legend}>
+            <View style={[styles.legendSwatch, { backgroundColor: "#1e40af" }]} />
+            <Text style={styles.legendLabel}>Low</Text>
+            <View style={[styles.legendSwatch, { backgroundColor: "#ef4444" }]} />
+            <Text style={styles.legendLabel}>High</Text>
+          </View>
         </View>
-        <View style={styles.legend}>
-          <View style={[styles.legendSwatch, { backgroundColor: "#3a5aa1" }]} />
-          <Text style={styles.legendLabel}>Low correlation</Text>
-          <View style={[styles.legendSwatch, { backgroundColor: "#ff794d" }]} />
-          <Text style={styles.legendLabel}>High correlation</Text>
-        </View>
-      </View>
+      )}
 
       {descriptor && (
         <View style={styles.descriptorBox}>
@@ -297,31 +224,10 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         </View>
       )}
 
-      <View style={styles.stepper}>
-        {PROCESS_STEPS.map((step, index) => (
-          <View key={step} style={styles.stepRow}>
-            <View
-              style={[
-                styles.stepDot,
-                index <= stepIndex ? styles.stepDotActive : styles.stepDotIdle,
-              ]}
-            />
-            <Text
-              style={[
-                styles.stepLabel,
-                index <= stepIndex ? styles.stepLabelActive : undefined,
-              ]}
-            >
-              {step}
-            </Text>
-          </View>
-        ))}
-      </View>
-
       <Button
-        title={completed ? "View capture workspace" : "Crunching sensor noise…"}
+        title={completed && !processing ? "View capture workspace" : "Processing…"}
         onPress={handleContinue}
-        disabled={!completed || !!error}
+        disabled={processing || !!error}
       />
     </View>
   );
@@ -358,31 +264,48 @@ const styles = StyleSheet.create({
     color: "#8b95ac",
     marginTop: 6,
   },
+  loadingPane: {
+    flex: 1,
+    borderRadius: 20,
+    backgroundColor: "#0c1626",
+    padding: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#f6f9ff",
+  },
+  loadingSubtext: {
+    fontSize: 13,
+    color: "#9aa4ba",
+    textAlign: "center",
+    lineHeight: 18,
+  },
   heatmapContainer: {
     flex: 1,
     borderRadius: 20,
     backgroundColor: "#0c1626",
-    padding: 20,
-    position: "relative",
-    overflow: "hidden",
-    justifyContent: "center",
+    padding: 24,
+    gap: 16,
   },
-  wave: {
-    position: "absolute",
-    top: -40,
-    left: -40,
-    right: -40,
-    bottom: -40,
-    borderRadius: 30,
-    backgroundColor: "#15253d",
+  heatmapTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#f6f9ff",
   },
   heatmap: {
     flexDirection: "row",
     flexWrap: "wrap",
     alignSelf: "center",
-    width: "80%",
+    width: "78%",
     aspectRatio: 1,
     gap: 4,
+    backgroundColor: "#050b14",
+    borderRadius: 12,
+    padding: 10,
   },
   heatCell: {
     width: `${100 / CALIBRATION_HEATMAP_GRID - 1.5}%`,
@@ -390,20 +313,19 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   legend: {
-    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 12,
     justifyContent: "center",
   },
   legendSwatch: {
-    width: 14,
-    height: 14,
+    width: 16,
+    height: 16,
     borderRadius: 4,
   },
   legendLabel: {
-    fontSize: 12,
-    color: "#8b95ac",
+    fontSize: 13,
+    color: "#c0c8da",
   },
   descriptorBox: {
     padding: 14,
@@ -425,36 +347,6 @@ const styles = StyleSheet.create({
       android: "monospace",
       default: "Courier",
     }),
-  },
-  stepper: {
-    gap: 10,
-  },
-  stepRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  stepDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-  },
-  stepDotActive: {
-    borderColor: "#5da9ff",
-    backgroundColor: "rgba(93, 169, 255, 0.35)",
-  },
-  stepDotIdle: {
-    borderColor: "#25344a",
-    backgroundColor: "transparent",
-  },
-  stepLabel: {
-    fontSize: 14,
-    color: "#7b88a6",
-  },
-  stepLabelActive: {
-    color: "#f6f9ff",
-    fontWeight: "600",
   },
   errorBox: {
     padding: 12,
