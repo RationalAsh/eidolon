@@ -211,6 +211,31 @@ export const fingerprintToHeatmap = (
   return heatmap;
 };
 
+const normaliseHeatmapValues = (heatmap: number[]): number[] => {
+  if (heatmap.length === 0) {
+    return heatmap;
+  }
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < heatmap.length; i += 1) {
+    const value = heatmap[i];
+    if (value < min) {
+      min = value;
+    }
+    if (value > max) {
+      max = value;
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-6) {
+    return heatmap.map(() => 0.5);
+  }
+
+  return heatmap.map((value) => (value - min) / (max - min));
+};
+
 export type FingerprintComputationResult = {
   fingerprint: Float32Array;
   descriptor: string;
@@ -279,6 +304,7 @@ export const computeFingerprintFromFrames = async (
     height,
     Math.min(CALIBRATION_HEATMAP_GRID, width)
   );
+  const normalisedHeatmap = normaliseHeatmapValues(heatmap);
 
   const correlations = flatResiduals.map((residual) =>
     computeCorrelation(residual, fingerprint)
@@ -298,7 +324,7 @@ export const computeFingerprintFromFrames = async (
   return {
     fingerprint,
     descriptor,
-    heatmap,
+    heatmap: normalisedHeatmap,
     correlations,
     size: width,
   };
