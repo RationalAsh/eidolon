@@ -4,6 +4,7 @@
 - Disabled the calibration navigator and rerouted onboarding so registered devices land directly on the main tabs.
 - Added an intro-screen status check that auto-skips onboarding when identity + registry state already exist.
 - Replaced the settings placeholder with live device identity details and a confirmation-gated onboarding reset control.
+- Delivered the capture UI with Expo Camera support, zoom + facing toggles, signature-aware metadata sidecars, and local media-library persistence for photos and videos.
 
 ## 2024-10-18
 - Initialized Expo TypeScript project scaffold and installed React Navigation dependencies.
