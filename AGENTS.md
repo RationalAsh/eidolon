@@ -190,7 +190,7 @@ Priority order (fastest to most impactful):
 		•	Read local sidecars, upsert into `device_receipt_signatures`.
 		•	Track `syncedAt` / Supabase row id in sidecar.
 	5.	Verifier experience (Agent D)
-		•	Implement screen to search Supabase by asset id/ digest and display verdict.
+		•	Implement screen for selecting a local photo/video, hashing it, querying Supabase by digest, and surface the signature verdict.
 		•	Optional: detect nearby pings and show a timeline.
 	6.	Reality pings & notifications (Agent E, optional)
 		•	Background task to emit signed pings.
@@ -206,7 +206,7 @@ Acceptance criteria & tests
 	•	Device registration: agent registers device and proves control via signed nonce.
 	•	Capture & sign: capturing a photo/video produces a local sidecar with digest + signature.
 	•	Supabase sync: tapping “Sync receipts” uploads new sidecars to `device_receipt_signatures` and marks them synced.
-	•	Verify (happy path): fetching the Supabase row and verifying signature succeeds for original media.
+	•	Verify (happy path): selecting the original media file replays the digest lookup against Supabase and verifies the signature.
 	•	Verify (missing path): deleting Supabase row → app reports UNVERIFIABLE.
 	•	Pings (optional): when a ping exists within ±5s of capture, UI shows presence confirmation.
 
@@ -277,6 +277,6 @@ UI demo script (judge-friendly)
 	1.	Onboard & register — show key generation, Supabase registry entry, and explain device-level signing.
 	2.	Capture photo/video — highlight instant “Signed & saved” status and show JSON sidecar snippet.
 	3.	Sync receipts — tap “Sync receipts to Supabase” and display the new row in Supabase dashboard.
-	4.	Verify lookup — query Supabase by asset id/digest, run Ed25519 verify, show verdict in app.
+	4.	Verify lookup — pick the captured media from the device library; the app hashes it, queries Supabase, and runs Ed25519 verify to show the verdict.
 	5.	Tamper scenario — edit a photo outside the app; note missing Supabase row → UNVERIFIABLE result.
 	6.	Show optional reality ping timeline if implemented.

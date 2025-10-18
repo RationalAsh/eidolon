@@ -154,6 +154,30 @@ export const verifySignatureWithFile = async (params: {
   return nacl.sign.detached.verify(bytes, signatureBytes, publicKeyBytes);
 };
 
+export const verifySupabaseReceiptAgainstFile = async (
+  receipt: SupabaseReceiptRow,
+  fileUri: string
+): Promise<{
+  digest: string;
+  digestMatches: boolean;
+  signatureValid: boolean;
+}> => {
+  const digest = await computeDigestForFile(fileUri);
+  const digestMatches =
+    normalizeHex(digest) === normalizeHex(receipt.digest);
+  const signatureValid = await verifySignatureWithFile({
+    fileUri,
+    signature: receipt.signature,
+    publicKey: receipt.public_key,
+  });
+
+  return {
+    digest,
+    digestMatches,
+    signatureValid,
+  };
+};
+
 export const buildVerificationVerdict = (
   context: Pick<
     VerificationReport,
