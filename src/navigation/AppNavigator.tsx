@@ -8,7 +8,7 @@ import {
   createNativeStackNavigator,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import CalibrationScreen from "../screens/CalibrationScreen";
 import CaptureScreen from "../screens/CaptureScreen";
 import OnboardingScreen from "../screens/OnboardingScreen";

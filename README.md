@@ -4,13 +4,14 @@ Hackathon-oriented Expo app that anchors captured media to device-specific entro
 
 ## Getting Started
 
+- Duplicate `.env.example` to `.env` and fill in `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
 - `npm install` (already run during scaffolding, rerun if dependencies change).
 - `npm run start` to launch Expo CLI, then open on iOS, Android, or web.
 - Project uses TypeScript and React Navigation (stack + tabs).
 
 ## Screen Outline
 
-- **Onboarding** — describes the end-to-end flow and kicks off calibration.
+- **Onboarding** — generates/stores device keys, checks Supabase config, and triggers device registration.
 - **Calibration** — checklist for collecting flat/dark frames and deriving PRNU.
 - **Capture** — placeholder notes for camera integration, digest construction, and uploads.
 - **Verify** — placeholder flow for loading sidecars, recomputing residuals, and showing verdicts.
