@@ -27,6 +27,7 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation }) => {
   const captured = darkFrames.length;
   const animatedBar = useRef(new Animated.Value(0)).current;
   const [capturing, setCapturing] = useState(false);
+  const [captureMode, setCaptureMode] = useState<"single" | "burst" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const parseError = useCallback((err: unknown) => {
@@ -67,43 +68,82 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation }) => {
     }
   }, [parseError, permission, requestPermission]);
 
-  const handleCapture = useCallback(async () => {
-    if (capturing || !cameraRef.current) {
-      return;
+  const captureFrame = useCallback(async () => {
+    if (!cameraRef.current) {
+      throw new Error("Camera is not ready yet.");
     }
-    setError(null);
-    setCapturing(true);
-    try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.4,
-        base64: true,
-        skipProcessing: true,
-      });
 
-      if (!photo?.uri || !photo.base64) {
-        throw new Error("Camera capture failed — missing image data");
+    const photo = await cameraRef.current.takePictureAsync({
+      quality: 0.4,
+      base64: true,
+      skipProcessing: true,
+    });
+
+    if (!photo?.uri || !photo.base64) {
+      throw new Error("Camera capture failed — missing image data");
+    }
+
+    const hash = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      photo.base64
+    );
+
+    const storedUri = await saveCalibrationFrameFile("dark", photo.uri);
+    addFrame("dark", {
+      uri: storedUri,
+      hash,
+      width: photo.width,
+      height: photo.height,
+    });
+
+    await FileSystem.deleteAsync(photo.uri, { idempotent: true });
+  }, [addFrame]);
+
+  const runCaptureSequence = useCallback(
+    async (mode: "single" | "burst", desiredCount: number) => {
+      if (capturing) {
+        return;
       }
 
-      const hash = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        photo.base64
-      );
+      setError(null);
+      setCapturing(true);
+      setCaptureMode(mode);
 
-      const storedUri = await saveCalibrationFrameFile("dark", photo.uri);
-      addFrame("dark", {
-        uri: storedUri,
-        hash,
-        width: photo.width,
-        height: photo.height,
-      });
+      try {
+        const remaining = Math.max(
+          0,
+          CALIBRATION_TARGET_FRAMES - captured
+        );
+        const framesToCapture = Math.min(desiredCount, remaining);
 
-      await FileSystem.deleteAsync(photo.uri, { idempotent: true });
-    } catch (err) {
-      setError(parseError(err));
-    } finally {
-      setCapturing(false);
-    }
-  }, [addFrame, capturing, parseError]);
+        if (framesToCapture <= 0) {
+          return;
+        }
+
+        for (let i = 0; i < framesToCapture; i += 1) {
+          await captureFrame();
+
+          if (mode === "burst" && i < framesToCapture - 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 120));
+          }
+        }
+      } catch (err) {
+        setError(parseError(err));
+      } finally {
+        setCapturing(false);
+        setCaptureMode(null);
+      }
+    },
+    [captured, capturing, captureFrame, parseError]
+  );
+
+  const handleCapture = useCallback(() => {
+    runCaptureSequence("single", 1);
+  }, [runCaptureSequence]);
+
+  const handleBurstCapture = useCallback(() => {
+    runCaptureSequence("burst", CALIBRATION_TARGET_FRAMES);
+  }, [runCaptureSequence]);
 
   const handleContinue = useCallback(() => {
     navigation.navigate("CalibrationProcess", {
@@ -186,9 +226,22 @@ const DarkFrameScreen: React.FC<Props> = ({ navigation }) => {
 
       <View style={styles.actions}>
         <Button
-          title={capturing ? "Capturing…" : "Capture frame"}
+          title={
+            capturing
+              ? captureMode === "burst"
+                ? "Capturing burst…"
+                : "Capturing…"
+              : "Capture frame"
+          }
           onPress={handleCapture}
           disabled={capturing || captured >= CALIBRATION_TARGET_FRAMES}
+        />
+        <Button
+          title={capturing ? "Capturing burst…" : "Capture remaining automatically"}
+          onPress={handleBurstCapture}
+          disabled={
+            capturing || captured >= CALIBRATION_TARGET_FRAMES
+          }
         />
         <Button
           title="Compute sensor residual"

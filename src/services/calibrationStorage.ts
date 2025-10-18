@@ -9,6 +9,9 @@ export type FingerprintRecord = {
   createdAt: string;
   flatFrames: number;
   darkFrames: number;
+  size: number;
+  fingerprint: number[];
+  correlations: number[];
   heatmap: number[];
 };
 
@@ -23,6 +26,10 @@ export const clearCalibrationFrames = async () => {
   const info = await FileSystem.getInfoAsync(FRAMES_DIR);
   if (info.exists) {
     await FileSystem.deleteAsync(FRAMES_DIR, { idempotent: true });
+  }
+  const fingerprintInfo = await FileSystem.getInfoAsync(FINGERPRINT_FILE);
+  if (fingerprintInfo.exists) {
+    await FileSystem.deleteAsync(FINGERPRINT_FILE, { idempotent: true });
   }
 };
 

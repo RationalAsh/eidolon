@@ -9,14 +9,17 @@ import {
   Text,
   View,
 } from "react-native";
-import * as Crypto from "expo-crypto";
 import type { CalibrationStackParamList } from "./CalibrationNavigator";
 import { useCalibrationSession } from "../../context/CalibrationSessionContext";
 import {
   FingerprintRecord,
   saveFingerprintRecord,
 } from "../../services/calibrationStorage";
-import { CALIBRATION_TARGET_FRAMES } from "./constants";
+import {
+  CALIBRATION_TARGET_FRAMES,
+  CALIBRATION_HEATMAP_GRID,
+} from "./constants";
+import { computeFingerprintFromFrames } from "../../utils/prnu";
 
 type Props = NativeStackScreenProps<CalibrationStackParamList, "CalibrationProcess">;
 
@@ -27,20 +30,19 @@ const PROCESS_STEPS = [
   "Quantising fingerprint descriptor…",
 ];
 
-const HEATMAP_SIZE = 8;
-
 const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
-  const { flatFrames, darkFrames, setFingerprintDescriptor } = useCalibrationSession();
+  const { flatFrames, darkFrames, setFingerprint } = useCalibrationSession();
   const flatCount = flatFrames.length;
   const darkCount = darkFrames.length;
   const [stepIndex, setStepIndex] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [descriptor, setDescriptor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [correlations, setCorrelations] = useState<number[] | null>(null);
   const heatmapAnim = useRef(new Animated.Value(0)).current;
   const waveAnim = useRef(new Animated.Value(0)).current;
   const [heatmapValues, setHeatmapValues] = useState<number[]>(() =>
-    Array.from({ length: HEATMAP_SIZE * HEATMAP_SIZE }, () => Math.random())
+    Array.from({ length: CALIBRATION_HEATMAP_GRID * CALIBRATION_HEATMAP_GRID }, () => Math.random())
   );
   const fingerprintSaved = useRef(false);
 
@@ -60,20 +62,6 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
     return "Unexpected error encountered.";
   }, []);
 
-  const descriptorToValues = useCallback((digest: string): number[] => {
-    const values: number[] = [];
-    const pairs = digest.match(/.{1,2}/g) ?? [];
-    const totalCells = HEATMAP_SIZE * HEATMAP_SIZE;
-
-    for (let i = 0; i < totalCells; i += 1) {
-      const pair = pairs[i % pairs.length] ?? "ff";
-      const numeric = parseInt(pair, 16);
-      values.push(numeric / 255);
-    }
-
-    return values;
-  }, []);
-
   useEffect(() => {
     let isMounted = true;
 
@@ -86,32 +74,38 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
           throw new Error("Insufficient calibration frames. Please restart the calibration flow.");
         }
 
-        const payload = JSON.stringify({
-          flat: flatFrames.map((frame) => frame.hash),
-          dark: darkFrames.map((frame) => frame.hash),
-        });
-
-        const digest = await Crypto.digestStringAsync(
-          Crypto.CryptoDigestAlgorithm.SHA256,
-          payload
+        const result = await computeFingerprintFromFrames(
+          flatFrames.map((frame) => frame.uri),
+          darkFrames.map((frame) => frame.uri),
+          flatFrames.map((frame) => frame.hash),
+          darkFrames.map((frame) => frame.hash)
         );
 
         if (!isMounted) {
           return;
         }
 
-        setDescriptor(digest);
-        setFingerprintDescriptor(digest);
-        const values = descriptorToValues(digest);
-        setHeatmapValues(values);
+        setDescriptor(result.descriptor);
+        setHeatmapValues(result.heatmap);
+        setCorrelations(result.correlations);
+        setFingerprint({
+          descriptor: result.descriptor,
+          vector: Array.from(result.fingerprint),
+          size: result.size,
+          heatmap: result.heatmap,
+          correlations: result.correlations,
+        });
 
         if (!fingerprintSaved.current) {
           const record: FingerprintRecord = {
-            descriptor: digest,
+            descriptor: result.descriptor,
             createdAt: new Date().toISOString(),
             flatFrames: flatCount,
             darkFrames: darkCount,
-            heatmap: values,
+            size: result.size,
+            fingerprint: Array.from(result.fingerprint),
+            correlations: result.correlations,
+            heatmap: result.heatmap,
           };
           await saveFingerprintRecord(record);
           fingerprintSaved.current = true;
@@ -128,7 +122,7 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
     return () => {
       isMounted = false;
     };
-  }, [darkCount, darkFrames, descriptorToValues, flatCount, flatFrames, parseError, setFingerprintDescriptor]);
+  }, [darkCount, darkFrames, flatCount, flatFrames, parseError, setFingerprint]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -208,6 +202,17 @@ const ProcessingScreen: React.FC<Props> = ({ navigation }) => {
         <Text style={styles.summaryText}>
           Dark frames: <Text style={styles.emphasis}>{darkCount}</Text>
         </Text>
+        {correlations && correlations.length > 0 && (
+          <Text style={styles.summaryText}>
+            Avg PRNU correlation:{" "}
+            <Text style={styles.emphasis}>
+              {(
+                correlations.reduce((acc, value) => acc + value, 0) /
+                correlations.length
+              ).toFixed(3)}
+            </Text>
+          </Text>
+        )}
         <Text style={styles.summaryHint}>
           We align, denoise, subtract, and normalise to derive the device-specific PRNU residual.
         </Text>
@@ -360,7 +365,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   heatCell: {
-    width: `${100 / HEATMAP_SIZE - 1.5}%`,
+    width: `${100 / CALIBRATION_HEATMAP_GRID - 1.5}%`,
     aspectRatio: 1,
     borderRadius: 4,
   },

@@ -36,7 +36,7 @@ Adjust the policies as you progress toward authenticated flows.
 - **Intro** — brand splash (Eidolon, tagline, logo) with CTA into onboarding.
 - **Identity** — generates/stores device keys with a guided animation (includes reset control).
 - **Registry** — syncs the device with Supabase, highlighting RLS requirements and offering a full reset.
-- **Calibration** — mini flow capturing real frames (front camera), collecting dark noise, and crunching a persisted fingerprint + heatmap preview.
+- **Calibration** — mini flow capturing real frames (front camera), collecting dark noise, and crunching a persisted PRNU fingerprint + heatmap preview.
 - **Capture** — placeholder notes for camera integration, digest construction, and uploads.
 - **Verify** — placeholder flow for loading sidecars, recomputing residuals, and showing verdicts.
 - **Settings** — hooks for device metadata, ping configuration, and developer utilities.
@@ -46,5 +46,5 @@ Adjust the policies as you progress toward authenticated flows.
 1. Integrate Supabase auth + device registration (challenge-response handshake).
 2. Implement calibration pipeline (frame capture, residual extraction, PRNU descriptor).
 3. Add capture UI with expo-camera, sensor sampling, and receipt generation.
-4. Wire verification flow: pull receipt by hash, recompute metrics, display verdict + ping timeline.
+4. Wire verification flow: load saved fingerprint, recompute residuals on selected media, display verdict + ping timeline.
 5. Connect periodic “reality pings” and Supabase Storage uploads to close the loop.

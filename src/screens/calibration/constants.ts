@@ -1,1 +1,3 @@
 export const CALIBRATION_TARGET_FRAMES = 30;
+export const CALIBRATION_MATRIX_SIZE = 64;
+export const CALIBRATION_HEATMAP_GRID = 8;

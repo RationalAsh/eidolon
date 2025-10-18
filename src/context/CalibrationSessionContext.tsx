@@ -20,13 +20,21 @@ type FrameInput = {
   height?: number;
 };
 
+export type FingerprintState = {
+  descriptor: string;
+  vector: number[];
+  size: number;
+  heatmap: number[];
+  correlations: number[];
+};
+
 type CalibrationSessionValue = {
   flatFrames: CapturedFrame[];
   darkFrames: CapturedFrame[];
-  fingerprintDescriptor: string | null;
+  fingerprint: FingerprintState | null;
   addFrame: (type: FrameType, frame: FrameInput) => void;
   resetSession: () => Promise<void>;
-  setFingerprintDescriptor: (descriptor: string | null) => void;
+  setFingerprint: (fingerprint: FingerprintState | null) => void;
 };
 
 const CalibrationSessionContext = createContext<CalibrationSessionValue | undefined>(undefined);
@@ -44,7 +52,7 @@ const createFrame = (type: FrameType, frame: FrameInput): CapturedFrame => ({
 export const CalibrationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [flatFrames, setFlatFrames] = useState<CapturedFrame[]>([]);
   const [darkFrames, setDarkFrames] = useState<CapturedFrame[]>([]);
-  const [fingerprintDescriptor, setFingerprintDescriptor] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<FingerprintState | null>(null);
   const hasInitialised = useRef(false);
 
   const addFrame = useCallback((type: FrameType, frame: FrameInput) => {
@@ -60,7 +68,7 @@ export const CalibrationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     await clearCalibrationFrames();
     setFlatFrames([]);
     setDarkFrames([]);
-    setFingerprintDescriptor(null);
+    setFingerprint(null);
   }, []);
 
   useEffect(() => {
@@ -76,12 +84,12 @@ export const CalibrationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     () => ({
       flatFrames,
       darkFrames,
-      fingerprintDescriptor,
+      fingerprint,
       addFrame,
       resetSession,
-      setFingerprintDescriptor,
+      setFingerprint,
     }),
-    [addFrame, darkFrames, fingerprintDescriptor, flatFrames, resetSession]
+    [addFrame, darkFrames, fingerprint, flatFrames, resetSession]
   );
 
   return (
@@ -98,4 +106,3 @@ export const useCalibrationSession = (): CalibrationSessionValue => {
   }
   return ctx;
 };
-
