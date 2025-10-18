@@ -18,4 +18,6 @@ export type CaptureReceipt = {
   height?: number;
   duration?: number;
   filename?: string | null;
+  syncedAt?: string | null;
+  supabaseId?: string | null;
 };

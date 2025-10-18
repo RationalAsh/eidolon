@@ -18,21 +18,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import nacl from "tweetnacl";
 import { ensureIdentity } from "../services/deviceIdentity";
+import { writeReceiptToFile } from "../services/captureStorage";
 import type { CaptureMode, CaptureReceipt } from "../types/capture";
-
-const resolveCaptureDirectory = () => {
-  const base =
-    FileSystem.documentDirectory ??
-    FileSystem.cacheDirectory ??
-    FileSystem.bundleDirectory ??
-    "";
-  return base.endsWith("/") ? base : `${base}/`;
-};
-
-const CAPTURE_METADATA_DIR = `${resolveCaptureDirectory()}captures`;
-
-const sanitizeFilename = (value: string) =>
-  value.replace(/[^a-zA-Z0-9_-]/g, "-");
 const DEFAULT_MODE: CaptureMode = "photo";
 const DEFAULT_CAMERA: CameraType = "back";
 
@@ -48,16 +35,6 @@ const formatBytes = (bytes: number) => {
     unitIndex += 1;
   }
   return `${value.toFixed(1)} ${units[unitIndex]}`;
-};
-
-const ensureDirectory = async (path: string) => {
-  if (!path) {
-    return;
-  }
-  const dirInfo = await FileSystem.getInfoAsync(path);
-  if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(path, { intermediates: true });
-  }
 };
 
 type AssetLike = {
@@ -158,15 +135,6 @@ const CaptureScreen: React.FC = () => {
     setCameraType((current) => (current === "back" ? "front" : "back"));
   }, []);
 
-const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
-    await ensureDirectory(CAPTURE_METADATA_DIR);
-    const safeAssetId = sanitizeFilename(receipt.assetId);
-    const metadataPath = `${CAPTURE_METADATA_DIR}/${safeAssetId}.json`;
-    const record: CaptureReceipt = { ...receipt, metadataPath };
-    await FileSystem.writeAsStringAsync(metadataPath, JSON.stringify(record, null, 2));
-    setLastReceipt(record);
-  }, []);
-
   const signAndPersist = useCallback(
     async (
       uri: string,
@@ -179,7 +147,6 @@ const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
     ) => {
       setIsProcessing(true);
       try {
-        await ensureDirectory(CAPTURE_METADATA_DIR);
         const base64 = await FileSystem.readAsStringAsync(uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -217,7 +184,8 @@ const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
           filename: assetInfo.filename ?? asset.filename ?? null,
         };
 
-        await saveReceipt(receipt);
+        const stored = await writeReceiptToFile(receipt);
+        setLastReceipt(stored);
         setStatusMessage(
           mode === "photo" ? "Photo saved with signature." : "Video saved with signature."
         );
@@ -231,7 +199,7 @@ const saveReceipt = useCallback(async (receipt: CaptureReceipt) => {
         setIsProcessing(false);
       }
     },
-    [cameraType, saveReceipt, zoom]
+    [cameraType, zoom]
   );
 
   const handleTakePhoto = useCallback(async () => {

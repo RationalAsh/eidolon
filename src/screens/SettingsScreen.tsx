@@ -17,6 +17,7 @@ import {
   isRegisteredLocally,
 } from "../services/deviceIdentity";
 import { resetOnboardingState } from "../services/onboardingReset";
+import { syncReceiptsToSupabase } from "../services/receiptSync";
 
 const SettingsScreen: React.FC = () => {
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
@@ -24,6 +25,8 @@ const SettingsScreen: React.FC = () => {
   const [registered, setRegistered] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [resetting, setResetting] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const confirm = useConfirmation();
   const isMountedRef = useRef(true);
@@ -134,6 +137,30 @@ const SettingsScreen: React.FC = () => {
     );
   }, [confirm, parseError, refreshIdentity]);
 
+  const handleSyncReceipts = useCallback(() => {
+    setSyncing(true);
+    setSyncMessage(null);
+
+    (async () => {
+      try {
+        const report = await syncReceiptsToSupabase();
+        const summary = `Uploaded ${report.uploaded}, skipped ${report.skipped}, errors ${report.errors}`;
+        setSyncMessage(summary);
+        if (report.lastError) {
+          setError(report.lastError);
+        } else {
+          setError(null);
+        }
+      } catch (err) {
+        const message = parseError(err);
+        setError(message);
+        setSyncMessage(null);
+      } finally {
+        setSyncing(false);
+      }
+    })();
+  }, [parseError]);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Settings</Text>
@@ -187,6 +214,14 @@ const SettingsScreen: React.FC = () => {
           color="#f1707a"
           disabled={resetting || loading}
         />
+        <Button
+          title={syncing ? "Syncing receipts…" : "Sync receipts to Supabase"}
+          onPress={handleSyncReceipts}
+          disabled={syncing || loading}
+        />
+        {syncMessage && (
+          <Text style={styles.syncMessage}>{syncMessage}</Text>
+        )}
       </View>
     </View>
   );
@@ -281,6 +316,11 @@ const styles = StyleSheet.create({
   },
   actions: {
     marginTop: "auto",
+    gap: 12,
+  },
+  syncMessage: {
+    fontSize: 12,
+    color: "#8b95ac",
   },
 });
 

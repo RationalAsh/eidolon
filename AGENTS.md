@@ -194,6 +194,27 @@ Table: pings
 	•	sig
 	•	created_at
 
+Table: device_receipt_signatures
+	•	asset_id (text pk) — system photo library identifier or local UUID
+	•	device_id (text)
+	•	public_key (text)
+	•	media_type (text enum: photo/video)
+	•	digest (text/sha256)
+	•	signature (text/base64)
+	•	byte_length (bigint)
+	•	signed_at (timestamptz)
+	•	camera_facing (text)
+	•	zoom (numeric)
+	•	width (int nullable)
+	•	height (int nullable)
+	•	duration (numeric nullable)
+	•	filename (text nullable)
+	•	asset_uri (text nullable)
+	•	metadata_path (text nullable)
+	•	extra (jsonb) — arbitrary client hints (e.g., local source URI)
+	•	synced_at (timestamptz default now())
+	•	created_at / updated_at (timestamptz defaults)
+
 Storage: media and sidecars.
 
 ⸻
@@ -207,6 +228,7 @@ Authentication via Supabase JWT (user sign-in with email or magic link).
 	•	POST /api/media/upload — uploads media; returns media_hash.
 	•	POST /api/receipts — attach receipt: {media_hash, digest_cbor(base64), sig, device_id}
 	•	GET /api/receipts/:media_hash — fetch receipt + verdict
+	•	POST /api/device-receipt-signatures — upsert signed local receipts (body mirrors `device_receipt_signatures` row)
 	•	POST /api/pings — upload signed ping
 	•	GET /api/pings?device_id=&ts_from=&ts_to= — query pings
 
