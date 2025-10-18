@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Crypto from "expo-crypto";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import type { CalibrationStackParamList } from "./CalibrationNavigator";
 import { useCalibrationSession } from "../../context/CalibrationSessionContext";
 import { CALIBRATION_TARGET_FRAMES } from "./constants";
